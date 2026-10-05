@@ -143,3 +143,46 @@ def test_recorder_orders_flushes_and_refuses_nan(tmp_path):
     assert records[0]['seq'] == 0
     assert records[0]['version'] == 1
     assert records[0]['run_id']
+
+
+def test_rejected_rehearsal_has_durable_result_without_baseline():
+    records = [dict(version=1, run_id='r', seq=0, event='start'),
+               dict(version=1, run_id='r', seq=1, event='final', execution='rejected',
+                    shutdown='not attempted', restoration='not applicable')]
+    result = evidence.analyze(records)
+    assert result['execution'] == 'rejected'
+    assert evidence.exit_code(result) == 1
+
+
+def test_baseline_event_after_rehearsal():
+    events = dense_run()
+    baseline = events[0].copy()
+    events[0] = {'event': 'start'}
+    baseline['event'] = 'baseline'
+    events.insert(1, baseline)
+    for i, e in enumerate(events): e.update(seq=i, version=1, run_id='run')
+    assert evidence.analyze(events)['encoder'] == 'passed'
+
+
+@pytest.mark.parametrize('mutation', ['bad_shutdown', 'guard', 'mismatched_readback', 'nan_readback', 'trailing_nonobject'])
+def test_corrupt_or_conflicting_evidence_never_passes(mutation):
+    events = dense_run()
+    if mutation == 'bad_shutdown': events[-1]['shutdown'] = 'whatever'
+    if mutation == 'guard': events[-1]['guard_events'] = ['following error']
+    if mutation == 'mismatched_readback':
+        events.insert(7, dict(event='readback', t=3.8, goal=2000, expected=2056))
+        for i,e in enumerate(events): e.update(seq=i, version=1, run_id='run')
+    if mutation == 'nan_readback': events[2]['t'] = float('nan')
+    if mutation == 'trailing_nonobject': events.append(None)
+    result = evidence.analyze(events)
+    assert evidence.exit_code(result) != 0
+    assert result['physical_accepted'] is False
+
+
+@pytest.mark.parametrize('run', ['114533', '120614'])
+def test_recorded_undertravel_regressions(run):
+    result = evidence.analyze_file(Path(__file__).parent / 'fixtures/hiwonder' / f'elbow-{run}.jsonl')
+    assert (result['requested_ticks'], result['peak_ticks']) == (56,16)
+    assert result['encoder'] == 'insufficient travel'
+    assert result['execution'] == 'interrupted/unknown'
+    assert result['shutdown'] == 'unverified'

@@ -231,6 +231,7 @@ def test_operator_gates_and_cleanup_in_simulated_run(monkeypatch, tmp_path, fail
             self.goal = pose()
             self.enabled = False
             self.ever_enabled = False
+            self.motors = {k: object() for k in pose()}
 
         def connect(self):
             self.is_connected = True
@@ -251,8 +252,8 @@ def test_operator_gates_and_cleanup_in_simulated_run(monkeypatch, tmp_path, fail
             if self.enabled:
                 self.actual = target.copy()
 
-        def read(self, register, motor, normalize=False):
-            assert motor == ELBOW and normalize is False
+        def read(self, register, motor, normalize=False, num_retry=0):
+            assert motor in pose() and normalize is False
             if register == "Goal_Position":
                 return self.goal[ELBOW] + (100 if failure == "goal_mismatch" else 0)
             if register == "Torque_Enable":
@@ -267,6 +268,10 @@ def test_operator_gates_and_cleanup_in_simulated_run(monkeypatch, tmp_path, fail
             events.append("enabled")
             if failure == "partial_enable":
                 raise OSError("simulated partial enable")
+
+        def write(self, register, motor, value, normalize=False, num_retry=0):
+            assert register == "Torque_Enable" and value == 0
+            self.disable_torque()
 
         def disable_torque(self, **kwargs):
             events.append("disable")
@@ -290,7 +295,7 @@ def test_operator_gates_and_cleanup_in_simulated_run(monkeypatch, tmp_path, fail
         "comports",
         lambda: [SimpleNamespace(device=p, serial_number=p) for p in ("leader", "follower")],
     )
-    monkeypatch.setattr("builtins.input", lambda prompt: events.append("enter"))
+    monkeypatch.setattr("builtins.input", lambda prompt: (events.append("enter") or ""))
     monkeypatch.setattr(check.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(check.time, "sleep", lambda duration: clock.__setitem__(0, clock[0] + duration))
 
@@ -301,6 +306,9 @@ def test_operator_gates_and_cleanup_in_simulated_run(monkeypatch, tmp_path, fail
             leader_bus.actual[ELBOW] += 80
 
     monkeypatch.setattr(check, "say", fake_say)
+    monkeypatch.setattr(check.session, "BoundedBus", lambda bus: bus)
+    monkeypatch.setattr(check.session, "snapshot", lambda bus, calibration: {})
+    monkeypatch.setattr(check.session, "DeviceLocks", lambda identities, root=None: __import__('contextlib').nullcontext())
     monkeypatch.chdir(tmp_path)
     args = SimpleNamespace(
         leader_port="leader",
@@ -309,8 +317,9 @@ def test_operator_gates_and_cleanup_in_simulated_run(monkeypatch, tmp_path, fail
         follower_id="unused-follower",
     )
     if failure:
-        with pytest.raises((OSError, RuntimeError)):
-            check.run(args)
+        result = check.run(args)
+        assert result['execution'] == ('completed' if failure == 'shutdown_failure' else 'aborted')
+        assert check.evidence.exit_code(result) != 0
     else:
         check.run(args)
         assert follower_bus.actual == pose()
