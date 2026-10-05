@@ -198,6 +198,14 @@ The script refuses mismatched calibration, excessive teaching motion, and motor 
 on excessive drift/lag. Logs go to `test-logs/elbow-lift-*.log`. This is a diagnostic, not a replacement
 for calibration or a guarantee of safe motion.
 
+Completion and torque-off do not prove a lift. The final report compares measured encoder travel with
+requested travel and labels less than 80% as `INCOMPLETE`. Even an encoder-travel pass needs visual
+confirmation. Each sample also logs raw elbow load, current, voltage, temperature, torque-enable,
+and the previous command's goal read-back; these are diagnostic readings, not additional force limits.
+Voice and terminal use identical result text. Rehearsal rejection reports too little/too much movement,
+the measured angle, and the allowed range. Incomplete follower travel reports requested versus measured
+movement and exits with code 2 after verified shutdown; it is not a successful lift result.
+
 ## Version Information
 - **Current Version**: v0.5.1 (based on upstream LeRobot v0.5.1)
 - **Python Version**: 3.12+

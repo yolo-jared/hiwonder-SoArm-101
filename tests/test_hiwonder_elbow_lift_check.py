@@ -8,8 +8,10 @@ import pytest
 from examples.hiwonder.elbow_lift_check import (
     ELBOW,
     LIFT_TICKS,
+    RehearsalError,
     check_feedback,
     infer_direction,
+    movement_report,
     preload_and_enable,
     require_rest,
     target_at,
@@ -48,6 +50,55 @@ def test_teaching_requires_elbow_movement_and_preserves_sign(sign):
 def test_ambiguous_or_excessive_teaching_is_rejected(changes):
     with pytest.raises(ValueError):
         infer_direction(pose(), {**pose(), **changes})
+
+
+@pytest.mark.parametrize("delta,word", [(1, "too little"), (800, "too much")])
+def test_rehearsal_message_states_amount_limit_and_no_follower_enable(delta, word):
+    with pytest.raises(RehearsalError) as caught:
+        infer_direction(pose(), {**pose(), ELBOW: 2000 + delta})
+    message = str(caught.value)
+    assert word in message
+    assert "Measured" in message and "required 3 to 20 degrees" in message
+    assert "follower was not enabled" in message
+
+
+def test_rehearsal_error_is_spoken_verbatim_by_main(monkeypatch):
+    from examples.hiwonder import elbow_lift_check as check
+
+    message = "Rehearsal incomplete: too much elbow movement."
+    monkeypatch.setattr(
+        "sys.argv", ["check", "--leader-port=L", "--follower-port=F", "--leader-id=L", "--follower-id=F"]
+    )
+    monkeypatch.setattr(check, "run", Mock(side_effect=RehearsalError(message)))
+    spoken = Mock()
+    monkeypatch.setattr(check, "say", spoken)
+    with pytest.raises(SystemExit) as caught:
+        check.main()
+    assert caught.value.code == 1
+    spoken.assert_called_once_with(message)
+
+
+def test_voice_and_terminal_use_identical_text(monkeypatch, capsys):
+    from examples.hiwonder import elbow_lift_check as check
+
+    speech = Mock()
+    monkeypatch.setattr(check.subprocess, "run", speech)
+    message = "INCOMPLETE: requested 4.92 degrees; measured peak 1.41 degrees."
+    check.say(message)
+    assert capsys.readouterr().out.strip() == message
+    assert speech.call_args.args[0] == ["/usr/bin/say", message]
+
+
+def test_incomplete_result_has_distinct_non_success_exit(monkeypatch):
+    from examples.hiwonder import elbow_lift_check as check
+
+    monkeypatch.setattr(
+        "sys.argv", ["check", "--leader-port=L", "--follower-port=F", "--leader-id=L", "--follower-id=F"]
+    )
+    monkeypatch.setattr(check, "run", Mock(return_value=False))
+    with pytest.raises(SystemExit) as caught:
+        check.main()
+    assert caught.value.code == 2
 
 
 @pytest.mark.parametrize("sign", [-1, 1])
@@ -125,6 +176,21 @@ def test_expected_feedback_passes():
     check_feedback(pose(), target, target, 1, {})
 
 
+@pytest.mark.parametrize("ticks", [0, 16])
+def test_partial_encoder_movement_reports_incomplete(ticks):
+    passed, message = movement_report(ticks)
+    assert passed is False
+    assert "INCOMPLETE" in message
+    assert "4.92" in message
+
+
+def test_full_encoder_movement_is_not_claimed_as_physical_lift():
+    passed, message = movement_report(LIFT_TICKS)
+    assert passed is True
+    assert "ENCODER TRAVEL CHECK PASSED" in message
+    assert "visual confirmation" in message
+
+
 @pytest.mark.parametrize("register", ["Torque_Enable", "Operating_Mode", "Status"])
 def test_unsafe_initial_motor_state_is_read_only_and_rejected(register):
     bus = Mock(is_calibrated=True)
@@ -143,7 +209,9 @@ def test_calibration_mismatch_is_not_automatically_rewritten():
     bus.write_calibration.assert_not_called()
 
 
-@pytest.mark.parametrize("failure", [None, "partial_enable", "read_failure", "shutdown_failure"])
+@pytest.mark.parametrize(
+    "failure", [None, "partial_enable", "read_failure", "shutdown_failure", "goal_mismatch", "torque_loss"]
+)
 def test_operator_gates_and_cleanup_in_simulated_run(monkeypatch, tmp_path, failure):
     from serial.tools import list_ports
 
@@ -182,6 +250,14 @@ def test_operator_gates_and_cleanup_in_simulated_run(monkeypatch, tmp_path, fail
             self.goal = target.copy()
             if self.enabled:
                 self.actual = target.copy()
+
+        def read(self, register, motor, normalize=False):
+            assert motor == ELBOW and normalize is False
+            if register == "Goal_Position":
+                return self.goal[ELBOW] + (100 if failure == "goal_mismatch" else 0)
+            if register == "Torque_Enable":
+                return int(self.enabled and failure != "torque_loss")
+            return 0
 
         def enable_torque(self):
             assert events.count("enter") == 2

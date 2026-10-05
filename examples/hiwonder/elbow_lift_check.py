@@ -22,12 +22,24 @@ LIFT_TICKS = 56  # Less than five degrees; fixed, deliberately not a CLI option.
 END_SECONDS = 9.0  # Three up, one hold, three return, two settling.
 
 
+class RehearsalError(ValueError):
+    """An operator-actionable read-only rehearsal result to speak verbatim."""
+
+
 def infer_direction(before, after):
     delta = after[ELBOW] - before[ELBOW]
     if not 3 * TICKS_PER_DEGREE <= abs(delta) <= 20 * TICKS_PER_DEGREE:
-        raise ValueError("Rehearsal needs a small, clear elbow lift (3–20 degrees). No follower motion.")
+        amount = "too little" if abs(delta) < 3 * TICKS_PER_DEGREE else "too much"
+        raise RehearsalError(
+            f"Rehearsal incomplete: {amount} elbow movement. "
+            f"Measured {abs(delta) / TICKS_PER_DEGREE:.1f} degrees; required 3 to 20 degrees. "
+            "Try a small elbow bend, not the middle-range calibration pose. The follower was not enabled."
+        )
     if any(abs(after[k] - v) > 3 * TICKS_PER_DEGREE for k, v in before.items() if k != ELBOW):
-        raise ValueError("Other leader joints moved too much. Repeat with shoulder and wrist steady.")
+        raise RehearsalError(
+            "Rehearsal incomplete: other leader joints moved too much. "
+            "Repeat with shoulder and wrist steady. The follower was not enabled."
+        )
     return 1 if delta > 0 else -1
 
 
@@ -75,9 +87,20 @@ def check_feedback(baseline, target, actual, direction, status):
         raise RuntimeError("Elbow exceeded the bounded travel envelope.")
 
 
+def movement_report(peak_ticks):
+    passed = peak_ticks >= 0.8 * LIFT_TICKS
+    label = "ENCODER TRAVEL CHECK PASSED" if passed else "INCOMPLETE"
+    return passed, (
+        f"{label}: requested {LIFT_TICKS / TICKS_PER_DEGREE:.2f} degrees; "
+        f"measured peak {peak_ticks / TICKS_PER_DEGREE:.2f} degrees "
+        f"({100 * peak_ticks / LIFT_TICKS:.0f}% of requested travel). "
+        "An upward physical lift still needs visual confirmation."
+    )
+
+
 def say(message):
     print(message, flush=True)
-    subprocess.run(["/usr/bin/say", message], check=True, timeout=15)
+    subprocess.run(["/usr/bin/say", message], check=True, timeout=45)
 
 
 def require_rest(bus):
@@ -174,6 +197,8 @@ def run(args):
                 raise RuntimeError("Not all follower motors enabled.")
             start = time.monotonic()
             last_elapsed = 0.0
+            peak_ticks = 0
+            last_sent_elbow = baseline[ELBOW]
             while True:
                 elapsed = time.monotonic() - start
                 if elapsed - last_elapsed > 0.5:
@@ -182,13 +207,39 @@ def run(args):
                 target = target_at(baseline, direction, elapsed)
                 actual = follower.bus.sync_read("Present_Position", normalize=False)
                 status = follower.bus.sync_read("Status", normalize=False)
+                telemetry = {
+                    name: follower.bus.read(name, ELBOW, normalize=False)
+                    for name in (
+                        "Goal_Position",
+                        "Torque_Enable",
+                        "Present_Load",
+                        "Present_Current",
+                        "Present_Voltage",
+                        "Present_Temperature",
+                    )
+                }
+                peak_ticks = max(peak_ticks, direction * (actual[ELBOW] - baseline[ELBOW]))
                 log.write(
-                    json.dumps({"t": round(elapsed, 3), "target": target, "actual": actual, "status": status})
+                    json.dumps(
+                        {
+                            "t": round(elapsed, 3),
+                            "target": target,
+                            "actual": actual,
+                            "status": status,
+                            "elbow_telemetry_raw": telemetry,
+                            "previous_sent_elbow": last_sent_elbow,
+                        }
+                    )
                     + "\n"
                 )
                 log.flush()
+                if telemetry["Torque_Enable"] != 1:
+                    raise RuntimeError("Elbow torque became disabled during the test.")
+                if telemetry["Goal_Position"] != last_sent_elbow:
+                    raise RuntimeError("Elbow goal read-back differs from the previous command.")
                 check_feedback(baseline, target, actual, direction, status)
                 follower.bus.sync_write("Goal_Position", target, normalize=False)
+                last_sent_elbow = target[ELBOW]
                 if elapsed >= END_SECONDS:
                     if any(abs(actual[k] - v) > 2 * TICKS_PER_DEGREE for k, v in baseline.items()):
                         raise RuntimeError("Follower did not return close enough to its starting position.")
@@ -210,7 +261,9 @@ def run(args):
             print(f"CUT SERVO POWER NOW. Shutdown could not be verified: {cleanup_errors}", flush=True)
             say("Cut servo power now. Shutdown could not be verified.")
             raise RuntimeError("Unverified shutdown")
-    say("Test finished. Follower motor torque verified off. You can check the terminal.")
+    passed, report = movement_report(peak_ticks)
+    say(f"Follower motor torque verified off. {report}")
+    return passed
 
 
 def main():
@@ -221,7 +274,12 @@ def main():
     parser.add_argument("--follower-id", required=True)
     args = parser.parse_args()
     try:
-        run(args)
+        if run(args) is False:
+            raise SystemExit(2)
+    except RehearsalError as exc:
+        # say() prints exactly the same message it sends to speech synthesis.
+        say(str(exc))
+        raise SystemExit(1) from exc
     except (Exception, KeyboardInterrupt) as exc:
         print(f"STOPPED: {exc or 'Ctrl+C'}", flush=True)
         with suppress(Exception):
