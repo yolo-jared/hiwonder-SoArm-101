@@ -255,3 +255,48 @@ until model-specific evidence and separately supervised qualification support th
 ---
 
 **Note**: This repository is adapted from the original [Hugging Face LeRobot](https://github.com/huggingface/lerobot) for use with Hiwonder hardware. For detailed tutorials and documentation, please refer to the [Official LeRobot Documentation](https://huggingface.co/docs/lerobot).
+
+### Follower-only supply-comparison diagnostic
+
+The isolated follower diagnostic (`examples/hiwonder/follower_lift_check.py`) does not connect
+or move the leader. It uses the same fixed 56-tick, nine-second elbow trajectory and bounded
+serial/cleanup helpers as the leader-rehearsal diagnostic. It changes no tuning, protection,
+or calibration settings. This is an operator-supervised investigation tool, not teleoperation.
+
+Before a trial, prepare a reviewed passive-direction JSON record with: `version: 1`, follower
+adapter `serial`, `calibration_hash`, `motor_identity` (IDs, configured models, model numbers,
+and firmware fields from the snapshot), integer `direction`, six-joint raw `rest_pose`,
+`manual_before`, `manual_lift`, `manual_return`, `reviewed_upward: true`,
+`camera_name: "icspring camera"`, and nonempty `sources` containing actual evidence paths and
+SHA-256 hashes. The review must establish an upward manual elbow lift on camera. The program
+checks identity, hashes and pose tolerances; it cannot establish collision clearance itself.
+Do not fabricate a record from a leader movement or an old, changed setup.
+
+A separately created session JSON must contain the current operator authorization:
+`authorized: true`, `started_at` (Unix seconds), follower `serial`, `certificate_sha256`
+(SHA-256 of the exact direction-record bytes), and `trials: []`. Each attempted trial is
+reserved durably before motor writes. One session permits at most three distinct-purpose
+trials within ten minutes. These limits are engineering bounds, not a safety certification.
+No automatic retries, unrestricted amplitude settings, or controller-tuning options exist.
+
+```bash
+uv run --no-sync python examples/hiwonder/follower_lift_check.py \
+  --follower-id=hiwonder_follower \
+  --direction-record=/absolute/path/to/reviewed-direction.json \
+  --session-file=/absolute/path/to/authorized-session.json \
+  --purpose="Adapter B: initial fixed-travel measurement" \
+  --camera-dir=/absolute/path/to/new/camera-output-directory
+```
+
+This macOS tool requires `/opt/homebrew/bin/ffmpeg`, `/usr/bin/say`, and the named
+`icspring camera`. It records silent JPEG sequences in the supplied new directory. Review
+the printed fresh frame and the physical setup before Enter; then spoken preparation and
+countdown precede motion. The process checks camera-frame freshness, all-joint goal/torque
+readbacks, faults, drift, lag, timing, and return. Camera liveness does not prove scene
+visibility or prevent collisions. Keep the secured follower clear and the power cutoff
+reachable. On any error, torque-off cleanup is attempted; an unverified shutdown requires
+cutting servo power. Logs are written under `test-logs/follower-lift-*.jsonl`.
+
+The result never assigns visual acceptance automatically. Review retained frames separately;
+encoder success alone is not a physical fix. Supply comparisons require matching trajectory,
+pose and settings, verified compatible adapters, and power-off handling between swaps.
