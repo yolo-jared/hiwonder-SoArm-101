@@ -276,9 +276,10 @@ def test_initial_torque_on_rejects_without_writes(hardware):
     assert h.bus.enabled and not h.writes
 
 
+@pytest.mark.parametrize("joint", ["elbow_flex", "shoulder_lift"])
 @pytest.mark.parametrize("failure", ["none", "speech", "configuration", "final_log", "camera_start"])
 def test_full_orchestration_never_needs_leader_and_preserves_failure_state(
-    hardware, tmp_path, monkeypatch, failure
+    hardware, tmp_path, monkeypatch, failure, joint
 ):
     from serial.tools import list_ports
 
@@ -293,9 +294,7 @@ def test_full_orchestration_never_needs_leader_and_preserves_failure_state(
         h.bus.is_connected = False
 
     h.bus.disconnect = disconnect
-    f = SimpleNamespace(
-        bus=h.bus, calibration={"elbow_flex": SimpleNamespace(range_min=1000, range_max=3000)}
-    )
+    f = SimpleNamespace(bus=h.bus, calibration={joint: SimpleNamespace(range_min=1000, range_max=3000)})
     monkeypatch.setattr(so_follower, "SOFollower", lambda config: f)
     monkeypatch.setattr(list_ports, "comports", lambda: [SimpleNamespace(serial_number="F", device="/fake")])
     monkeypatch.setattr(check.session, "BoundedBus", lambda b: b)
@@ -310,11 +309,14 @@ def test_full_orchestration_never_needs_leader_and_preserves_failure_state(
 
     monkeypatch.setattr(check.session, "require_unchanged", unchanged)
     monkeypatch.setattr(check.lift, "require_rest", lambda b: None)
-    monkeypatch.setattr(check, "validate_certificate", lambda *a: -1)
+    monkeypatch.setattr(check, "validate_certificate", lambda *a, **kw: -1)
     monkeypatch.setattr(check, "reserve_trial", lambda *a: None)
     monkeypatch.setattr("builtins.input", lambda text: "")
 
+    spoken = []
+
     def say(text):
+        spoken.append(text)
         if failure == "speech":
             raise RuntimeError("speech unavailable")
 
@@ -324,8 +326,8 @@ def test_full_orchestration_never_needs_leader_and_preserves_failure_state(
     monkeypatch.setattr(
         check,
         "execute",
-        lambda bus, pose, direction, emit, camera: original_execute(
-            bus, pose, direction, emit, camera, clock=lambda: h.clock[0], sleep=h.sleep
+        lambda bus, pose, direction, emit, camera, **kw: original_execute(
+            bus, pose, direction, emit, camera, clock=lambda: h.clock[0], sleep=h.sleep, **kw
         ),
     )
 
@@ -358,6 +360,7 @@ def test_full_orchestration_never_needs_leader_and_preserves_failure_state(
     cert.write_text(json.dumps({"serial": "F"}))
     monkeypatch.chdir(tmp_path)
     args = SimpleNamespace(
+        joint=joint,
         direction_record=cert,
         session_file=tmp_path / "session.json",
         follower_id="f",
@@ -373,6 +376,8 @@ def test_full_orchestration_never_needs_leader_and_preserves_failure_state(
     elif failure == "none":
         assert result["execution"] == "completed"
         assert result["encoder"] == "passed"
+        assert result["joint"] == joint
+        assert any(joint.replace("_flex", "").replace("_", " ") in text for text in spoken)
         assert result["shutdown"] == "verified off"
     else:
         assert result["shutdown"] == "unverified"
@@ -393,3 +398,173 @@ def test_camera_liveness_check_rejects(tmp_path, fault):
             os.utime(frame, (time.time() - 5, time.time() - 5))
     with pytest.raises(RuntimeError):
         camera.check()
+
+
+@pytest.fixture
+def shoulder_record(record):
+    cert, snap, pose = copy.deepcopy(record)
+    cert.update(
+        version=2, joint="shoulder_lift", reviewed_clearance=True, manual_lift={**pose, "shoulder_lift": 1920}
+    )
+    return cert, snap, pose
+
+
+def test_shoulder_record_requires_its_own_axis_and_clearance(shoulder_record):
+    cert, snap, pose = shoulder_record
+    assert check.validate_certificate(cert, "F", snap, pose, joint="shoulder_lift") == -1
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "legacy",
+        "wrong_joint",
+        "clearance",
+        "missing_joint",
+        "elbow_motion",
+        "tiny",
+        "large",
+        "other_drift",
+        "source",
+        "pose",
+        "identity",
+    ],
+)
+def test_shoulder_certificate_rejects_ineligible_evidence(shoulder_record, fault):
+    cert, snap, pose = shoulder_record
+    if fault == "legacy":
+        cert["version"] = 1
+    if fault == "wrong_joint":
+        cert["joint"] = "elbow_flex"
+    if fault == "missing_joint":
+        del cert["joint"]
+    if fault == "clearance":
+        cert["reviewed_clearance"] = False
+    if fault == "elbow_motion":
+        cert["manual_lift"] = {**pose, "elbow_flex": 1920}
+    if fault == "tiny":
+        cert["manual_lift"]["shoulder_lift"] = 1999
+    if fault == "large":
+        cert["manual_lift"]["shoulder_lift"] = 1700
+    if fault == "other_drift":
+        cert["manual_lift"]["elbow_flex"] = 1900
+    if fault == "source":
+        cert["sources"][0]["sha256"] = "wrong"
+    if fault == "pose":
+        pose = {**pose, "shoulder_lift": 2050}
+    if fault == "identity":
+        cert["serial"] = "other"
+    with pytest.raises((ValueError, RuntimeError)):
+        check.validate_certificate(cert, "F", snap, pose, joint="shoulder_lift")
+
+
+@pytest.mark.parametrize("joint", ["wrist_flex", "shoulder_pan", "", None, True])
+def test_unsupported_joint_rejected_before_writes(hardware, joint):
+    h = hardware
+    r = check.execute(
+        h.bus, h.pose, -1, h.emit, lambda: None, joint=joint, clock=lambda: h.clock[0], sleep=h.sleep
+    )
+    assert r["execution"] == "rejected" and not h.writes
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "none",
+        "undertravel",
+        "camera",
+        "slow",
+        "goal",
+        "torque",
+        "status",
+        "opposite",
+        "drift",
+        "lag",
+        "envelope",
+        "return",
+        "disk",
+    ],
+)
+@pytest.mark.parametrize("joint", ["elbow_flex", "shoulder_lift"])
+def test_selected_joint_execution_and_fault_cleanup(hardware, fault, joint):
+    h = hardware
+    reads = []
+    raw_read = h.bus.read
+    sync_read = h.bus.sync_read
+    original_emit = h.emit
+
+    def read(field, motor, **kw):
+        reads.append((field, motor))
+        return raw_read(field, motor, **kw)
+
+    def sync(field, **kw):
+        values = sync_read(field, **kw)
+        if h.bus.enabled:
+            if fault == "goal" and field == "Goal_Position":
+                values[joint] += 1
+            if fault == "torque" and field == "Torque_Enable":
+                values[joint] = 0
+            if fault == "status" and field == "Status":
+                values[joint] = 1
+            if field == "Present_Position":
+                if fault == "undertravel":
+                    values[joint] = 2000 + round((values[joint] - 2000) * 0.4)
+                if fault == "opposite":
+                    values[joint] = 2020
+                if fault == "drift":
+                    values["elbow_flex" if joint == "shoulder_lift" else "shoulder_lift"] += 30
+                if fault == "lag":
+                    values[joint] = 1950
+                if fault == "envelope" and h.clock[0] >= 3:
+                    values[joint] = 1930
+                if fault == "return" and h.clock[0] >= 7:
+                    values[joint] = 1970
+        return values
+
+    def camera():
+        if h.bus.enabled and fault == "camera":
+            raise RuntimeError("camera stopped")
+        if h.bus.enabled and fault == "slow":
+            h.clock[0] += 0.6
+
+    def emit(event, **fields):
+        if event == "sample" and fault == "disk":
+            raise OSError("disk full")
+        original_emit(event, **fields)
+
+    h.bus.read, h.bus.sync_read = read, sync
+    r = check.execute(h.bus, h.pose, -1, emit, camera, joint=joint, clock=lambda: h.clock[0], sleep=h.sleep)
+    assert r["shutdown"] == "verified off" and not h.bus.enabled
+    goals = [w[1] for w in h.writes if w[0] == "goal"]
+    assert goals
+    assert all(p[k] == 2000 for p in goals for k in check.JOINTS if k != joint)
+    if fault in ("none", "undertravel"):
+        assert r["execution"] == "completed"
+        assert len(goals) > 50 and min(p[joint] for p in goals) == 1944
+        assert goals[-1] == h.pose
+        assert reads and all(motor == joint for _, motor in reads)
+        events = [dict(version=1, run_id="joint-test", seq=0, event="start", joint=joint)]
+        for item in h.events + [dict(event="final", **r)]:
+            events.append(dict(item, version=1, run_id="joint-test", seq=len(events)))
+        analyzed = check.evidence.analyze(events)
+        assert analyzed["joint"] == joint
+        assert analyzed["encoder"] == ("passed" if fault == "none" else "insufficient travel")
+        assert analyzed["physical_accepted"] is False
+        assert joint.replace("_", " ") in check.evidence.format_result(analyzed)
+        for changed in ("shoulder_pan", "elbow_flex" if joint == "shoulder_lift" else "shoulder_lift"):
+            bad = copy.deepcopy(events)
+            next(e for e in bad if e["event"] == "sample")["joint"] = changed
+            assert check.evidence.analyze(bad)["encoder"] == "invalid data"
+    else:
+        assert r["execution"] == "aborted" and r["guard_events"]
+        if fault == "return":
+            assert "Return error" in r["guard_events"][0]
+
+
+@pytest.mark.parametrize("joint", ["elbow_flex", "shoulder_lift"])
+def test_joint_specific_calibrated_path_limits(joint):
+    pose = dict.fromkeys(check.JOINTS, 2000)
+    limits = SimpleNamespace(range_min=1950, range_max=2100)
+    with pytest.raises(ValueError, match="range"):
+        check.lift.validate_path(pose, -1, limits, joint=joint)
+    check.lift.validate_path(pose, 1, limits, joint=joint)
