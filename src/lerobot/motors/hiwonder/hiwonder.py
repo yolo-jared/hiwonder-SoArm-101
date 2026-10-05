@@ -24,6 +24,7 @@ from lerobot.motors.feetech.feetech import (
 )
 from lerobot.motors.feetech.tables import SCAN_BAUDRATES
 from lerobot.motors.motors_bus import Motor, MotorCalibration, NameOrID
+from lerobot.utils.decorators import check_if_not_connected
 
 from . import hiwonder_sdk as hw
 from .tables import (
@@ -106,6 +107,30 @@ class HiwonderMotorsBus(FeetechMotorsBus):
 
         if any(MODEL_PROTOCOL[model] != self.protocol_version for model in self.models):
             raise ValueError(f"Some motors are incompatible with protocol_version={self.protocol_version}")
+
+    def disable_torque(self, motors: int | str | list[str] | None = None, num_retry: int = 0) -> None:
+        """Verify torque is off, retrying motors that ignored an acknowledged write."""
+        remaining = self._get_motors_list(motors)
+        for _ in range(3):
+            super().disable_torque(remaining, num_retry=num_retry)
+            remaining = [
+                motor
+                for motor in remaining
+                if self.read("Torque_Enable", motor, normalize=False, num_retry=num_retry) != 0
+            ]
+            if not remaining:
+                return
+
+        raise RuntimeError(f"Failed to disable torque on motors: {remaining}")
+
+    @check_if_not_connected
+    def disconnect(self, disable_torque: bool = True) -> None:
+        try:
+            super().disconnect(disable_torque=disable_torque)
+        finally:
+            # Close the port even when torque read-back detects a motor still enabled.
+            if self.is_connected:
+                self.port_handler.closePort()
 
     def _assert_same_protocol(self) -> None:
         if any(MODEL_PROTOCOL[model] != self.protocol_version for model in self.models):

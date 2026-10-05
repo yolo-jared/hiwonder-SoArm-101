@@ -17,12 +17,13 @@
 import re
 import sys
 from collections.abc import Generator
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.encoding_utils import encode_sign_magnitude
+from lerobot.motors.feetech.feetech import FeetechMotorsBus
 from lerobot.motors.feetech.tables import STS_SMS_SERIES_CONTROL_TABLE
 from lerobot.motors.hiwonder import hiwonder_sdk as hw
 from lerobot.motors.hiwonder.hiwonder import HiwonderMotorsBus
@@ -410,3 +411,48 @@ def test_record_ranges_of_motion(mock_motors, dummy_motors):
     assert mock_motors.stubs[stub].calls == 3
     assert mins == expected_mins
     assert maxes == expected_maxes
+
+
+def test_disable_torque_retries_motor_still_enabled(dummy_motors):
+    bus = HiwonderMotorsBus(port="/dev/dummy-port", motors=dummy_motors)
+    reads = iter([1, 0, 0, 0])
+
+    with (
+        patch.object(FeetechMotorsBus, "disable_torque", autospec=True) as write_disable,
+        patch.object(bus, "read", side_effect=lambda *_args, **_kwargs: next(reads)) as read,
+    ):
+        bus.disable_torque(num_retry=5)
+
+    assert write_disable.call_args_list == [
+        call(bus, ["dummy_1", "dummy_2", "dummy_3"], num_retry=5),
+        call(bus, ["dummy_1"], num_retry=5),
+    ]
+    assert read.call_count == 4
+
+
+def test_disable_torque_reports_motor_that_remains_enabled(dummy_motors):
+    bus = HiwonderMotorsBus(port="/dev/dummy-port", motors=dummy_motors)
+
+    with (
+        patch.object(FeetechMotorsBus, "disable_torque", autospec=True) as write_disable,
+        patch.object(bus, "read", return_value=1),
+        pytest.raises(RuntimeError, match="dummy_1"),
+    ):
+        bus.disable_torque(motors=["dummy_1"], num_retry=5)
+
+    assert write_disable.call_count == 3
+
+
+def test_disconnect_closes_port_if_torque_verification_fails(dummy_motors):
+    bus = HiwonderMotorsBus(port="/dev/dummy-port", motors=dummy_motors)
+    bus.port_handler.is_open = True
+
+    with (
+        patch.object(bus.port_handler, "clearPort"),
+        patch.object(bus.port_handler, "closePort") as close_port,
+        patch.object(bus, "disable_torque", side_effect=RuntimeError("torque still enabled")),
+        pytest.raises(RuntimeError, match="torque still enabled"),
+    ):
+        bus.disconnect()
+
+    close_port.assert_called_once()
