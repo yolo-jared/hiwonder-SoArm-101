@@ -127,6 +127,47 @@ pip install -e .
 pip install -e ".[hiwonder]"
 ```
 
+For a `uv` installation with Hiwonder servo support, use `uv sync --extra hiwonder` instead.
+
+## SO-ARM101 setup on macOS with `uv`
+
+The [Hiwonder manual](https://docs.hiwonder.com/projects/LeRobot/en/latest/docs/SO_ARM101_Open_Source_6_Axis_Robotic_Arm_User_Manual.html) shows Windows `COM` ports and `python -m lerobot.teleoperate`. In this checkout, use macOS `/dev/cu.usbmodem...` ports and the installed `lerobot-teleoperate` command. `uv run --no-sync` runs that command in this repository's existing `.venv` without requiring a `python` executable on your shell's `PATH`. The old `lerobot.teleoperate` module is not present here; its entry point is `lerobot.scripts.lerobot_teleoperate`.
+
+Run `uv sync --extra hiwonder` once after cloning. For later commands, work from the repository root. Discover the two ports interactively with `uv run --no-sync lerobot-find-port`, disconnecting/reconnecting one arm at a time to identify it. Port names can change; do not assume a saved mapping is still correct. Replace the example port values below with the ports you identified. Keep each `--teleop.id` and `--robot.id` consistent between calibration and teleoperation: those IDs select the corresponding saved calibration files. If already calibrated, replace `my_leader` and `my_follower` with the IDs used for those calibrations; changing IDs will not load the old files.
+
+Before calibration, connect both USB and the required servo power, clear obstacles, and support the arm while motor torque is disabled. Position each arm as shown in the manual, then run these commands **one at a time in an interactive Terminal**:
+
+```bash
+uv run --no-sync lerobot-calibrate \
+  --teleop.type=so101_leader \
+  --teleop.port=/dev/cu.usbmodemLEADER \
+  --teleop.id=my_leader
+
+uv run --no-sync lerobot-calibrate \
+  --robot.type=so101_follower \
+  --robot.port=/dev/cu.usbmodemFOLLOWER \
+  --robot.id=my_follower
+```
+
+If an existing calibration-file prompt appears, press Enter only to reuse a calibration you trust; type `c` and Enter to recalibrate. During calibration, move the prompted joints gently through their usable ranges. Wrist roll is excluded from the range sweep by the code; it receives a homing offset and a preset full encoder range. Do not force any joint past physical or cable limits. A `Calibration saved` line confirms the file was written, not that paired-arm motion has been checked.
+
+Before the first **camera-free** teleoperation test, secure the follower base, clear its entire motion area, verify which port belongs to each arm, and place leader and follower in similar poses (including wrist and gripper). The follower can move as soon as the command connects. Start with small leader movements, keep clear of the follower, and press Ctrl+C immediately for unexpected motion:
+
+```bash
+uv run --no-sync lerobot-teleoperate \
+  --robot.type=so101_follower \
+  --robot.port=/dev/cu.usbmodemFOLLOWER \
+  --robot.id=my_follower \
+  --robot.max_relative_target=2.0 \
+  --teleop.type=so101_leader \
+  --teleop.port=/dev/cu.usbmodemLEADER \
+  --teleop.id=my_leader \
+  --fps=10 \
+  --teleop_time_s=10
+```
+
+The 10-second duration and per-command position-change cap make this a short first check; they do **not** guarantee a safe motion speed or replace the physical checks. If direction, starting pose, or movement size is wrong, stop and inspect calibration before trying again. Add cameras only after camera-free teleoperation behaves correctly.
+
 ## Version Information
 - **Current Version**: v0.5.1 (based on upstream LeRobot v0.5.1)
 - **Python Version**: 3.12+
