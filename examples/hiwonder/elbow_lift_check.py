@@ -33,24 +33,32 @@ class RehearsalError(ValueError):
     """An operator-actionable read-only rehearsal result to speak verbatim."""
 
 
-def infer_direction(before, after):
-    delta = after[ELBOW] - before[ELBOW]
+def require_joint(joint):
+    if joint not in ("elbow_flex", "shoulder_lift"):
+        raise ValueError("Only elbow_flex or shoulder_lift is supported")
+
+
+def infer_direction(before, after, *, joint=ELBOW):
+    require_joint(joint)
+    label = joint.replace("_flex", "").replace("_", " ")
+    delta = after[joint] - before[joint]
     if not 3 * TICKS_PER_DEGREE <= abs(delta) <= 20 * TICKS_PER_DEGREE:
         amount = "too little" if abs(delta) < 3 * TICKS_PER_DEGREE else "too much"
         raise RehearsalError(
-            f"Rehearsal incomplete: {amount} elbow movement. "
+            f"Rehearsal incomplete: {amount} {label} movement. "
             f"Measured {abs(delta) / TICKS_PER_DEGREE:.1f} degrees; required 3 to 20 degrees. "
-            "Try a small elbow bend, not the middle-range calibration pose. The follower was not enabled."
+            f"Try a small {label} bend, not the middle-range calibration pose. The follower was not enabled."
         )
-    if any(abs(after[k] - v) > 3 * TICKS_PER_DEGREE for k, v in before.items() if k != ELBOW):
+    if any(abs(after[k] - v) > 3 * TICKS_PER_DEGREE for k, v in before.items() if k != joint):
         raise RehearsalError(
-            "Rehearsal incomplete: other leader joints moved too much. "
-            "Repeat with shoulder and wrist steady. The follower was not enabled."
+            "Rehearsal incomplete: other joints moved too much. "
+            "Repeat with the other joints steady. The follower was not enabled."
         )
     return 1 if delta > 0 else -1
 
 
-def target_at(baseline, direction, elapsed):
+def target_at(baseline, direction, elapsed, *, joint=ELBOW):
+    require_joint(joint)
     if direction not in (-1, 1) or not math.isfinite(elapsed):
         raise ValueError("Invalid trajectory input")
     if elapsed < 3:
@@ -59,15 +67,16 @@ def target_at(baseline, direction, elapsed):
         fraction = 1
     else:
         fraction = max(0, 1 - (elapsed - 4) / 3)
-    return {**baseline, ELBOW: baseline[ELBOW] + direction * round(LIFT_TICKS * fraction)}
+    return {**baseline, joint: baseline[joint] + direction * round(LIFT_TICKS * fraction)}
 
 
-def validate_path(baseline, direction, calibration):
+def validate_path(baseline, direction, calibration, *, joint=ELBOW):
+    require_joint(joint)
     if any(not isinstance(v, int) or not 0 <= v <= 4095 for v in baseline.values()):
         raise ValueError("Encoder position outside the supported single-turn range; diagnose before motion.")
-    endpoint = target_at(baseline, direction, 3)[ELBOW]
-    if not all(calibration.range_min <= p <= calibration.range_max for p in (baseline[ELBOW], endpoint)):
-        raise ValueError("Lift would exceed the follower's recorded elbow range. No motion.")
+    endpoint = target_at(baseline, direction, 3, joint=joint)[joint]
+    if not all(calibration.range_min <= p <= calibration.range_max for p in (baseline[joint], endpoint)):
+        raise ValueError(f"Lift would exceed the follower's recorded {joint} range. No motion.")
 
 
 def preload_and_enable(bus, baseline):
@@ -81,17 +90,18 @@ def preload_and_enable(bus, baseline):
     bus.enable_torque()
 
 
-def check_feedback(baseline, target, actual, direction, status):
+def check_feedback(baseline, target, actual, direction, status, *, joint=ELBOW):
+    require_joint(joint)
     if any(status.values()):
         raise RuntimeError(f"Motor fault: {status}")
-    if direction * (actual[ELBOW] - baseline[ELBOW]) < -TICKS_PER_DEGREE:
-        raise RuntimeError("Elbow moved opposite the taught encoder direction.")
-    if any(abs(actual[k] - v) > 2 * TICKS_PER_DEGREE for k, v in baseline.items() if k != ELBOW):
+    if direction * (actual[joint] - baseline[joint]) < -TICKS_PER_DEGREE:
+        raise RuntimeError(f"{joint} moved opposite the taught encoder direction.")
+    if any(abs(actual[k] - v) > 2 * TICKS_PER_DEGREE for k, v in baseline.items() if k != joint):
         raise RuntimeError("A joint that should be holding still drifted more than two degrees.")
     if any(abs(actual[k] - v) > 4 * TICKS_PER_DEGREE for k, v in target.items()):
         raise RuntimeError("Follower lag exceeded four degrees. Stop and diagnose; do not raise the limits.")
-    if abs(actual[ELBOW] - baseline[ELBOW]) > LIFT_TICKS + TICKS_PER_DEGREE:
-        raise RuntimeError("Elbow exceeded the bounded travel envelope.")
+    if abs(actual[joint] - baseline[joint]) > LIFT_TICKS + TICKS_PER_DEGREE:
+        raise RuntimeError(f"{joint} exceeded the bounded travel envelope.")
 
 
 def movement_report(peak_ticks):

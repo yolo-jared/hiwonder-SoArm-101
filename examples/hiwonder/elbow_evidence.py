@@ -1,4 +1,4 @@
-"""Pure offline elbow evidence evaluation. Importing this module never opens hardware."""
+"""Pure offline elbow/shoulder-lift evidence evaluation. Importing this module never opens hardware."""
 
 import argparse
 import json
@@ -108,6 +108,16 @@ def analyze(records):
         starts = [e for e in records if e["event"] == "start"]
         if len(starts) != 1:
             raise ValueError("Exactly one start record required")
+        joint = starts[0].get("joint", ELBOW)
+        if joint not in (ELBOW, "shoulder_lift"):
+            raise ValueError("Unsupported evidence joint")
+        result["joint"] = joint
+        for event in records:
+            if (
+                event["event"] in ("baseline", "readback", "sample", "command")
+                and event.get("joint", ELBOW) != joint
+            ):
+                raise ValueError("Mixed or missing joint identity in evidence")
         finals = [e for e in records if e["event"] == "final"]
         if len(finals) > 1:
             raise ValueError("Duplicate final record")
@@ -140,7 +150,7 @@ def analyze(records):
         start = baselines[0] if baselines else starts[0]
         if "baseline" not in start:
             return result
-        baseline = finite(start["baseline"][ELBOW])
+        baseline = finite(start["baseline"][joint])
         direction = start["direction"]
         if direction not in (-1, 1):
             raise ValueError("Invalid direction")
@@ -163,7 +173,7 @@ def analyze(records):
             prior_start = a
             for value in e["actual"].values():
                 finite(value)
-        travels = [direction * (e["actual"][ELBOW] - baseline) for e in samples]
+        travels = [direction * (e["actual"][joint] - baseline) for e in samples]
         result["peak_ticks"] = max(travels, default=0)
         result["encoder"] = "insufficient evidence"
         commands = [e for e in records if e["event"] == "command"]
@@ -196,7 +206,7 @@ def analyze(records):
                     and all(b - a <= 0.2 + 1e-9 for a, b in zip(times, times[1:], strict=False))
                 )
                 if first["t"] <= lower and accepted and coverage:
-                    median = statistics.median(direction * (e["actual"][ELBOW] - baseline) for e in window)
+                    median = statistics.median(direction * (e["actual"][joint] - baseline) for e in window)
                     result["hold_median_ticks"] = median
                     result["tracking_error_ticks"] = REQUESTED - median
                     result["encoder"] = "passed" if median >= 0.8 * REQUESTED else "insufficient travel"
@@ -254,6 +264,7 @@ def exit_code(result):
 def format_result(result):
     return (
         f"Execution: {result['execution']}. Encoder check: {result['encoder']}. "
+        f"Joint: {result.get('joint', ELBOW).replace('_', ' ')}. "
         f"Requested {result['requested_ticks']} ticks; peak {result['peak_ticks']}; "
         f"hold median {result['hold_median_ticks']}. Shutdown: {result['shutdown']}. "
         f"Observation: {result['observation']}. "

@@ -542,8 +542,9 @@ def test_selected_joint_execution_and_fault_cleanup(hardware, fault, joint):
         assert r["execution"] == "completed"
         assert len(goals) > 50 and min(p[joint] for p in goals) == 1944
         assert goals[-1] == h.pose
-        assert reads and all(motor == joint for _, motor in reads)
-        events = [dict(version=1, run_id="joint-test", seq=0, event="start", joint=joint)]
+        telemetry_reads = [(field, motor) for field, motor in reads if field.startswith("Present_")]
+        assert telemetry_reads and all(motor == joint for _, motor in telemetry_reads)
+        events = [{"version": 1, "run_id": "joint-test", "seq": 0, "event": "start", "joint": joint}]
         for item in h.events + [dict(event="final", **r)]:
             events.append(dict(item, version=1, run_id="joint-test", seq=len(events)))
         analyzed = check.evidence.analyze(events)
@@ -568,3 +569,48 @@ def test_joint_specific_calibrated_path_limits(joint):
     with pytest.raises(ValueError, match="range"):
         check.lift.validate_path(pose, -1, limits, joint=joint)
     check.lift.validate_path(pose, 1, limits, joint=joint)
+
+
+@pytest.mark.parametrize("joint,motor_id", [("shoulder_lift", 2), ("elbow_flex", 3)])
+def test_actual_wire_encoder_routes_selected_joint_without_opening_port(joint, motor_id):
+    from lerobot.robots.so_follower.config_so_follower import SOFollowerRobotConfig
+    from lerobot.robots.so_follower.so_follower import SOFollower
+
+    robot = SOFollower(SOFollowerRobotConfig(port="/NO_HARDWARE_OFFLINE", id="offline-packet-test"))
+    packets = []
+
+    class CapturePort:
+        is_open = True
+        is_using = False
+
+        def clearPort(self):  # noqa: N802 - matches the vendor port interface
+            pass
+
+        def writePort(self, packet):  # noqa: N802 - matches the vendor port interface
+            packets.append(list(packet))
+            return len(packet)
+
+        def openPort(self):  # noqa: N802 - matches the vendor port interface
+            raise AssertionError("Offline verification must never open hardware")
+
+        def closePort(self):  # noqa: N802 - matches the vendor port interface
+            self.is_open = False
+
+    capture = CapturePort()
+    robot.bus.port_handler = capture
+    robot.bus.packet_handler.port_handler = capture
+    pose = dict.fromkeys(check.JOINTS, 2000)
+    target = check.lift.target_at(pose, -1, 3, joint=joint)
+    try:
+        robot.bus.sync_write("Goal_Position", target, normalize=False)
+    finally:
+        capture.is_open = False
+    assert len(packets) == 1
+    packet = packets[0]
+    assert packet[:3] == [255, 255, 254]
+    assert packet[4:7] == [131, 42, 2]
+    assert len(packet) == packet[3] + 4
+    assert sum(packet[2:]) & 255 == 255
+    data = packet[7:-1]
+    decoded = {data[i]: data[i + 1] + 256 * data[i + 2] for i in range(0, len(data), 3)}
+    assert decoded == {i: 1944 if i == motor_id else 2000 for i in range(1, 7)}

@@ -256,12 +256,14 @@ until model-specific evidence and separately supervised qualification support th
 
 **Note**: This repository is adapted from the original [Hugging Face LeRobot](https://github.com/huggingface/lerobot) for use with Hiwonder hardware. For detailed tutorials and documentation, please refer to the [Official LeRobot Documentation](https://huggingface.co/docs/lerobot).
 
-### Follower-only supply-comparison diagnostic
+### Follower-only supply and joint-comparison diagnostic
 
 The isolated follower diagnostic (`examples/hiwonder/follower_lift_check.py`) does not connect
-or move the leader. It uses the same fixed 56-tick, nine-second elbow trajectory and bounded
+or move the leader. It uses the same fixed 56-tick, nine-second lift trajectory and bounded
 serial/cleanup helpers as the leader-rehearsal diagnostic. It changes no tuning, protection,
 or calibration settings. This is an operator-supervised investigation tool, not teleoperation.
+Select `--joint=shoulder_lift` for the shoulder comparison; the default remains `elbow_flex`.
+All other joints hold their starting targets. No other joint or larger amplitude is supported.
 
 Before a trial, prepare a reviewed passive-direction JSON record with: `version: 1`, follower
 adapter `serial`, `calibration_hash`, `motor_identity` (IDs, configured models, model numbers,
@@ -271,6 +273,17 @@ and firmware fields from the snapshot), integer `direction`, six-joint raw `rest
 SHA-256 hashes. The review must establish an upward manual elbow lift on camera. The program
 checks identity, hashes and pose tolerances; it cannot establish collision clearance itself.
 Do not fabricate a record from a leader movement or an old, changed setup.
+
+For shoulder lift, the record must instead use `version: 2`, `joint: "shoulder_lift"`,
+and `reviewed_clearance: true`, with the same identity/pose/source fields above. The passive
+movement must isolate the **follower shoulder**, not its elbow or the leader. Review the
+whole small lift-and-return path on camera, including jaw/table and cable clearance; an
+elbow direction record is rejected for a shoulder run. Start with a fresh camera/serial/
+torque/settings/pose check when the operator is present. If needed, the operator demonstrates
+the small shoulder movement with servo power off, supports the arm, and returns it to rest.
+Do not fabricate the review fields or assume an encoder sign establishes upward clearance.
+Do not begin this diagnostic while the operator is away. Spoken cues are not a substitute
+for an operator at the power cutoff.
 
 A separately created session JSON must contain the current operator authorization:
 `authorized: true`, `started_at` (Unix seconds), follower `serial`, `certificate_sha256`
@@ -300,3 +313,11 @@ cutting servo power. Logs are written under `test-logs/follower-lift-*.jsonl`.
 The result never assigns visual acceptance automatically. Review retained frames separately;
 encoder success alone is not a physical fix. Supply comparisons require matching trajectory,
 pose and settings, verified compatible adapters, and power-off handling between swaps.
+
+For the shoulder comparison, use the command above with `--joint=shoulder_lift`, a new
+reviewed **shoulder** direction record, and a new named supervised session (not an expired
+adapter-comparison session). Keep settings unchanged. A shoulder pass versus elbow
+undertravel narrows the investigation but does not prove a bad elbow servo: joint loading
+differs. The start, sample, command and readback records carry the selected `joint`; samples
+use `joint_telemetry_raw` and `previous_sent_joint`. The offline evidence analyzer selects
+that joint, rejects mixed-joint records, and continues reading legacy elbow logs.

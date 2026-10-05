@@ -1,4 +1,4 @@
-"""Supervised follower-only fixed elbow trial. No tuning or leader connection.
+"""Supervised follower-only fixed elbow or shoulder-lift trial. No tuning or leader connection.
 
 Requires a reviewed passive direction record and an explicitly authorized session
 file. Camera liveness is a process/frame-age check, NOT collision avoidance.
@@ -46,13 +46,22 @@ def valid_pose(pose):
         raise ValueError("Complete, finite, single-turn six-joint pose required")
 
 
-def validate_certificate(cert, serial, snapshot, pose):
+def validate_certificate(cert, serial, snapshot, pose, *, joint=lift.ELBOW):
     """Identity and pose eligibility, not a claim of current physical clearance."""
+    lift.require_joint(joint)
+    version = cert.get("version")
+    if version == 1:
+        if joint != lift.ELBOW or cert.get("joint", lift.ELBOW) != lift.ELBOW:
+            raise ValueError("Legacy direction evidence is elbow-only")
+    elif version == 2:
+        if cert.get("joint") != joint or cert.get("reviewed_clearance") is not True:
+            raise ValueError("Joint-specific direction and full-path clearance review required")
+    else:
+        raise ValueError("Unknown direction evidence version")
     for p in (pose, cert["rest_pose"], cert["manual_before"], cert["manual_lift"], cert["manual_return"]):
         valid_pose(p)
     if (
-        cert["version"] != 1
-        or cert["serial"] != serial
+        cert["serial"] != serial
         or cert["calibration_hash"] != snapshot["calibration_hash"]
         or cert["motor_identity"] != motor_identity(snapshot)
     ):
@@ -61,7 +70,7 @@ def validate_certificate(cert, serial, snapshot, pose):
         raise ValueError("Reviewed upward camera evidence required")
     if type(cert["direction"]) is not int or cert["direction"] not in (-1, 1):
         raise ValueError("Invalid direction")
-    if lift.infer_direction(cert["manual_before"], cert["manual_lift"]) != cert["direction"]:
+    if lift.infer_direction(cert["manual_before"], cert["manual_lift"], joint=joint) != cert["direction"]:
         raise ValueError("Passive encoder direction contradicts record")
     tolerance = 2 * lift.TICKS_PER_DEGREE
     for a, b in (
@@ -106,7 +115,9 @@ def reserve_trial(path, serial, certificate_hash, purpose, now=None):
         os.fsync(stream.fileno())
 
 
-def execute(bus, baseline, direction, emit, camera_check, *, clock=time.monotonic, sleep=time.sleep):
+def execute(
+    bus, baseline, direction, emit, camera_check, *, joint=lift.ELBOW, clock=time.monotonic, sleep=time.sleep
+):
     """Fixed existing trajectory and guards; cleanup independent of camera/logging."""
     attempted = False
     result = {
@@ -118,11 +129,14 @@ def execute(bus, baseline, direction, emit, camera_check, *, clock=time.monotoni
         "errors": [],
     }
     try:
+        lift.require_joint(joint)
         valid_pose(baseline)
+        if type(direction) is not int or direction not in (-1, 1):
+            raise ValueError("Invalid direction")
         if any(bus.sync_read("Torque_Enable", normalize=False).values()):
             raise RuntimeError("Initial torque is ON; no automatic state change")
         camera_check()
-        emit("baseline", baseline=baseline, direction=direction)
+        emit("baseline", baseline=baseline, direction=direction, joint=joint)
         attempted = True
         with session.Deadline(0.5):
             lift.preload_and_enable(bus, baseline)
@@ -135,39 +149,40 @@ def execute(bus, baseline, direction, emit, camera_check, *, clock=time.monotoni
             session.require_fresh(previous, read_start)
             previous = read_start
             camera_check()
-            target = lift.target_at(baseline, direction, read_start - start)
+            target = lift.target_at(baseline, direction, read_start - start, joint=joint)
             actual = bus.sync_read("Present_Position", normalize=False)
             read_end = clock()
             status = bus.sync_read("Status", normalize=False)
             torque = bus.sync_read("Torque_Enable", normalize=False)
             goals = bus.sync_read("Goal_Position", normalize=False)
             telemetry = {
-                name: bus.read(name, lift.ELBOW, normalize=False)
+                name: bus.read(name, joint, normalize=False)
                 for name in ("Present_Load", "Present_Current", "Present_Voltage", "Present_Temperature")
             }
-            telemetry.update(Goal_Position=goals[lift.ELBOW], Torque_Enable=torque[lift.ELBOW])
-            emit("readback", t=clock(), goal=goals[lift.ELBOW], expected=last_sent[lift.ELBOW])
+            telemetry.update(Goal_Position=goals[joint], Torque_Enable=torque[joint])
+            emit("readback", joint=joint, t=clock(), goal=goals[joint], expected=last_sent[joint])
             emit(
                 "sample",
+                joint=joint,
                 read_start=read_start,
                 read_end=read_end,
                 actual=actual,
                 intended_target=target,
-                previous_sent_elbow=last_sent[lift.ELBOW],
+                previous_sent_joint=last_sent[joint],
                 status=status,
                 torque=torque,
                 goals=goals,
-                elbow_telemetry_raw=telemetry,
+                joint_telemetry_raw=telemetry,
             )
             if goals != last_sent:
                 raise RuntimeError("Foreign or missing goal readback")
             if any(v != 1 for v in torque.values()):
                 raise RuntimeError("A follower motor became disabled")
-            lift.check_feedback(baseline, target, actual, direction, status)
+            lift.check_feedback(baseline, target, actual, direction, status, joint=joint)
             session.require_fresh(read_start, clock())
             bus.sync_write("Goal_Position", target, normalize=False)
             last_sent = target.copy()
-            emit("command", t=clock(), goal=target[lift.ELBOW])
+            emit("command", joint=joint, t=clock(), goal=target[joint])
             if read_start - start >= lift.END_SECONDS:
                 result["return_error_ticks"] = max(abs(actual[k] - baseline[k]) for k in JOINTS)
                 if result["return_error_ticks"] > 2 * lift.TICKS_PER_DEGREE:
@@ -268,6 +283,9 @@ def run(args):
     from lerobot.robots.so_follower.config_so_follower import SOFollowerRobotConfig
     from lerobot.robots.so_follower.so_follower import SOFollower
 
+    joint = args.joint
+    lift.require_joint(joint)
+    label = joint.replace("_flex", "").replace("_", " ")
     cert_bytes = Path(args.direction_record).read_bytes()
     cert = json.loads(cert_bytes)
     digest = hashlib.sha256(cert_bytes).hexdigest()
@@ -298,7 +316,8 @@ def run(args):
 
         emit(
             "start",
-            mode="follower-only-supply-comparison",
+            mode="follower-only-joint-comparison",
+            joint=joint,
             adapter_serials=[cert["serial"]],
             purpose=args.purpose,
             certificate_sha256=digest,
@@ -308,8 +327,8 @@ def run(args):
                 lift.require_rest(bus)
                 before = session.snapshot(bus, device.calibration)
                 pose = bus.sync_read("Present_Position", normalize=False)
-                direction = validate_certificate(cert, cert["serial"], before, pose)
-                lift.validate_path(pose, direction, device.calibration[lift.ELBOW])
+                direction = validate_certificate(cert, cert["serial"], before, pose, joint=joint)
+                lift.validate_path(pose, direction, device.calibration[joint], joint=joint)
                 emit("configuration", snapshots=[before])
                 print(f"Review current full-path image: {camera.check().resolve()}", flush=True)
                 input(
@@ -322,16 +341,16 @@ def run(args):
                 for word in ("Three", "Two", "One"):
                     lift.say(word)
                     time.sleep(1)
-                lift.say("Starting the small elbow lift after checks. It will return to rest.")
+                lift.say(f"Starting the small {label} lift after checks. It will return to rest.")
                 camera.check()
                 current = session.snapshot(bus, device.calibration)
                 session.require_unchanged(before, current)
                 lift.require_rest(bus)
                 pose = bus.sync_read("Present_Position", normalize=False)
-                direction = validate_certificate(cert, cert["serial"], current, pose)
-                lift.validate_path(pose, direction, device.calibration[lift.ELBOW])
+                direction = validate_certificate(cert, cert["serial"], current, pose, joint=joint)
+                lift.validate_path(pose, direction, device.calibration[joint], joint=joint)
                 reserve_trial(args.session_file, cert["serial"], digest, args.purpose)
-                result = execute(bus, pose, direction, emit, camera.check)
+                result = execute(bus, pose, direction, emit, camera.check, joint=joint)
         except (Exception, KeyboardInterrupt) as exc:
             result["guard_events"].append(str(exc) or "Ctrl+C")
         result["errors"].extend(hardware.close_errors)
@@ -357,6 +376,7 @@ def run(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--joint", choices=("elbow_flex", "shoulder_lift"), default="elbow_flex")
     parser.add_argument("--follower-id", required=True)
     parser.add_argument("--direction-record", required=True)
     parser.add_argument("--session-file", required=True)
