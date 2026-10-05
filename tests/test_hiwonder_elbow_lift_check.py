@@ -295,7 +295,7 @@ def test_operator_gates_and_cleanup_in_simulated_run(monkeypatch, tmp_path, fail
         "comports",
         lambda: [SimpleNamespace(device=p, serial_number=p) for p in ("leader", "follower")],
     )
-    monkeypatch.setattr("builtins.input", lambda prompt: (events.append("enter") or ""))
+    monkeypatch.setattr("builtins.input", lambda prompt: events.append("enter") or "")
     monkeypatch.setattr(check.time, "monotonic", lambda: clock[0])
     monkeypatch.setattr(check.time, "sleep", lambda duration: clock.__setitem__(0, clock[0] + duration))
 
@@ -308,7 +308,9 @@ def test_operator_gates_and_cleanup_in_simulated_run(monkeypatch, tmp_path, fail
     monkeypatch.setattr(check, "say", fake_say)
     monkeypatch.setattr(check.session, "BoundedBus", lambda bus: bus)
     monkeypatch.setattr(check.session, "snapshot", lambda bus, calibration: {})
-    monkeypatch.setattr(check.session, "DeviceLocks", lambda identities, root=None: __import__('contextlib').nullcontext())
+    monkeypatch.setattr(
+        check.session, "DeviceLocks", lambda identities, root=None: __import__("contextlib").nullcontext()
+    )
     monkeypatch.chdir(tmp_path)
     args = SimpleNamespace(
         leader_port="leader",
@@ -318,7 +320,7 @@ def test_operator_gates_and_cleanup_in_simulated_run(monkeypatch, tmp_path, fail
     )
     if failure:
         result = check.run(args)
-        assert result['execution'] == ('completed' if failure == 'shutdown_failure' else 'aborted')
+        assert result["execution"] == ("completed" if failure == "shutdown_failure" else "aborted")
         assert check.evidence.exit_code(result) != 0
     else:
         check.run(args)
