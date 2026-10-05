@@ -1,3 +1,6 @@
+Push only to Jared's fork, never Hiwonder-official:
+`git -C /Users/jaredsisk/project-code/hiwonder-SoArm-101 push https://github.com/yolo-jared/hiwonder-SoArm-101.git main:main`
+
 # Repository agent guidance
 
 This is Hiwonder's LeRobot fork for SO-ARM101 hardware. Read the macOS `uv` setup and safety procedure in `README.md` before giving calibration or teleoperation commands. Keep this environment separate from other robotics repositories.
