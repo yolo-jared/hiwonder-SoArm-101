@@ -168,6 +168,36 @@ uv run --no-sync lerobot-teleoperate \
 
 The 10-second duration and per-command position-change cap make this a short first check; they do **not** guarantee a safe motion speed or replace the physical checks. If direction, starting pose, or movement size is wrong, stop and inspect calibration before trying again. Add cameras only after camera-free teleoperation behaves correctly.
 
+### Hands-free follower elbow diagnostic (macOS)
+
+If the arms need to begin resting on the table, the normal teleoperation command can try to align
+different starting joint coordinates. This separate, small diagnostic instead preloads the follower's
+own current positions before enabling torque. It does not change calibration or motor tuning.
+
+```bash
+uv run --no-sync python examples/hiwonder/elbow_lift_check.py \
+  --leader-port=/dev/cu.usbmodemLEADER --leader-id=my_leader \
+  --follower-port=/dev/cu.usbmodemFOLLOWER --follower-id=my_follower
+```
+
+Use your discovered ports and existing calibration IDs. Both bases must be clamped, the lift area
+clear, servo power connected, and the power cutoff reachable. The arms must initially be torque-off.
+Do not support the powered follower with your hand.
+
+1. Press Enter for a **read-only rehearsal**. At the spoken cue, raise the leader's gripper a little
+   by bending only its elbow; keep its shoulder and wrist steady. Hold for the 15-second measurement.
+2. After the spoken instruction, put the leader down, clear your hands, and press Enter again.
+3. Following a spoken countdown, the follower attempts less than five degrees of elbow movement,
+   holds briefly, returns to its starting position, and disables torque with read-back verification.
+   All other follower joints are commanded to hold their starting positions.
+
+The taught encoder direction is **not proof of a collision-free upward path** on the follower.
+Observe the attempt and cut power if it presses down, binds, or moves unexpectedly. On an error or
+Ctrl+C, torque is released immediately rather than attempting a return; the arm can settle abruptly.
+The script refuses mismatched calibration, excessive teaching motion, and motor faults, and stops
+on excessive drift/lag. Logs go to `test-logs/elbow-lift-*.log`. This is a diagnostic, not a replacement
+for calibration or a guarantee of safe motion.
+
 ## Version Information
 - **Current Version**: v0.5.1 (based on upstream LeRobot v0.5.1)
 - **Python Version**: 3.12+
