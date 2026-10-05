@@ -16,6 +16,13 @@ from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
 
+# Support both direct script invocation and package imports without importing hardware.
+if __package__:
+    from . import elbow_evidence as evidence, elbow_session as session
+else:
+    import elbow_evidence as evidence
+    import elbow_session as session
+
 ELBOW = "elbow_flex"
 TICKS_PER_DEGREE = 4095 / 360
 LIFT_TICKS = 56  # Less than five degrees; fixed, deliberately not a CLI option.
@@ -116,154 +123,269 @@ def require_rest(bus):
         raise RuntimeError("A motor reports a fault. No motion.")
 
 
-def run(args):
-    # Lazy imports let --help and software-only tests run without touching hardware.
-    from serial.tools.list_ports import comports
-
+def make_devices(args):
     from lerobot.robots.so_follower.config_so_follower import SOFollowerRobotConfig
     from lerobot.robots.so_follower.so_follower import SOFollower
     from lerobot.teleoperators.so_leader.config_so_leader import SOLeaderTeleopConfig
     from lerobot.teleoperators.so_leader.so_leader import SOLeader
 
-    ports = {p.device: p.serial_number for p in comports()}
-    if args.leader_port == args.follower_port or any(
-        p not in ports for p in (args.leader_port, args.follower_port)
-    ):
-        raise RuntimeError("Two distinct, currently connected ports are required. Re-identify the arms.")
-    print(f"Leader:   {args.leader_port}, USB serial {ports[args.leader_port]}")
-    print(f"Follower: {args.follower_port}, USB serial {ports[args.follower_port]}")
-    print("Confirm those physical identities; USB serial alone does not identify an arm's role.")
-    print("Keep both bases clamped. Both arms start gently resting, with room to lift above the table.")
-    print("Servo power connected; cutoff reachable. No hand on the follower during powered motion.")
-    print("Normal finish returns to rest. An error/Ctrl+C releases torque; the arm can settle abruptly.")
-    input("Press Enter for LEADER-ONLY rehearsal; the follower stays torque-off: ")
+    return (
+        SOLeader(SOLeaderTeleopConfig(port=args.leader_port, id=args.leader_id)),
+        SOFollower(SOFollowerRobotConfig(port=args.follower_port, id=args.follower_id)),
+    )
 
-    leader = SOLeader(SOLeaderTeleopConfig(port=args.leader_port, id=args.leader_id))
-    follower = SOFollower(SOFollowerRobotConfig(port=args.follower_port, id=args.follower_id))
+
+def run(args):
+    from serial.tools.list_ports import comports
+
+    identities = session.identify_ports(args.leader_port, args.follower_port, comports())
+    print(f"Leader: {args.leader_port}, USB serial {identities[0]}")
+    print(f"Follower: {args.follower_port}, USB serial {identities[1]}")
+    print("Confirm physical identities; USB serial alone does not establish arm role.")
+    print("Close other serial tools. Locks only exclude cooperating diagnostics.")
+    leader, follower = make_devices(args)
     if not leader.calibration or not follower.calibration:
-        raise RuntimeError("Both named calibration files must already exist. No motion.")
-    buses = [leader.bus, follower.bus]
-    attempted_enable = False
-    cleanup_errors = []
+        raise RuntimeError("Both named calibration files must exist. No motion.")
+    buses = [session.BoundedBus(leader.bus), session.BoundedBus(follower.bus)]
+    inspect_only = getattr(args, "inspect", False)
     log_dir = Path("test-logs")
     log_dir.mkdir(exist_ok=True)
-    log_path = log_dir / f"elbow-lift-{datetime.now():%Y%m%d-%H%M%S}.log"
+    log_path = log_dir / f"elbow-lift-{datetime.now():%Y%m%d-%H%M%S-%f}.log"
     print(f"Diagnostic log: {log_path.resolve()}")
-    try:
-        for bus in buses:
-            # Do NOT call follower.connect(): its configure() re-enables torque.
-            bus.connect()
-            require_rest(bus)
-        say("Rehearsal only. Both motors are off. Leave the leader resting until I say lift.")
-        before = leader.bus.sync_read("Present_Position", normalize=False)
-        say(
-            "Lift the leader gripper slowly by bending only its elbow. Keep the shoulder and wrist steady. Hold there."
+    records = []
+    attempted_enable = False
+    execution, shutdown_state = "rejected", "not attempted"
+    guard_events, errors = [], []
+    return_error = None
+    hardware = session.HardwareSession(buses, identities)
+    with evidence.Recorder(log_path) as recorder:
+
+        def emit(event, **fields):
+            with session.Deadline(session.IO_SECONDS):
+                record = recorder.emit(event, **fields)
+            records.append(record)
+
+        emit(
+            "start",
+            adapter_serials=identities,
+            mode="inspect" if inspect_only else "baseline",
+            cleanup_budget_seconds=session.cleanup_budget(buses[1]),
         )
-        time.sleep(15)
-        after = leader.bus.sync_read("Present_Position", normalize=False)
-        direction = infer_direction(before, after)
-        say(
-            "Rehearsal complete. Put the leader back down. Then press Enter with your hands clear of the follower."
-        )
-        print("The follower will attempt less than five degrees in the taught elbow direction.")
-        print("That direction is NOT a verified upward path. Cut power if it presses down or binds.")
-        input("Press Enter to authorize the small follower lift and return: ")
-        say("Follower test in ten seconds. Leave both arms resting. Keep hands clear. Watch the follower.")
-        time.sleep(7)
-        for word in ("Three", "Two", "One"):
-            say(word)
-            time.sleep(1)
-        for bus in buses:
-            require_rest(bus)
-        baseline = follower.bus.sync_read("Present_Position", normalize=False)
-        validate_path(baseline, direction, follower.calibration[ELBOW])
-        say("Starting the small lift. It will return to rest automatically. Keep clear.")
-        with log_path.open("w") as log:
-            log.write(
-                json.dumps(
-                    {
-                        "baseline": baseline,
-                        "leader_before": before,
-                        "leader_after": after,
-                        "direction": direction,
-                    }
-                )
-                + "\n"
-            )
-            log.flush()
-            attempted_enable = True  # Covers a partially successful enable, too.
-            preload_and_enable(follower.bus, baseline)
-            if any(v != 1 for v in follower.bus.sync_read("Torque_Enable", normalize=False).values()):
-                raise RuntimeError("Not all follower motors enabled.")
-            start = time.monotonic()
-            last_elapsed = 0.0
-            peak_ticks = 0
-            last_sent_elbow = baseline[ELBOW]
-            while True:
-                elapsed = time.monotonic() - start
-                if elapsed - last_elapsed > 0.5:
-                    raise RuntimeError("Control loop stalled. No catch-up jump will be commanded.")
-                last_elapsed = elapsed
-                target = target_at(baseline, direction, elapsed)
-                actual = follower.bus.sync_read("Present_Position", normalize=False)
-                status = follower.bus.sync_read("Status", normalize=False)
-                telemetry = {
-                    name: follower.bus.read(name, ELBOW, normalize=False)
-                    for name in (
-                        "Goal_Position",
-                        "Torque_Enable",
-                        "Present_Load",
-                        "Present_Current",
-                        "Present_Voltage",
-                        "Present_Temperature",
+        try:
+            with hardware:
+                snapshots = [
+                    session.snapshot(bus, device.calibration)
+                    for bus, device in zip(buses, (leader, follower), strict=False)
+                ]
+                emit("configuration", snapshots=snapshots)
+                if inspect_only:
+                    for snapshot in snapshots:
+                        for name, fields in snapshot.get("motors", {}).items():
+                            for field, value in fields.items():
+                                if isinstance(value, dict) and value.get("state") == "error":
+                                    errors.append(
+                                        f"Inspection read failed: {name}.{field}: {value.get('message')}"
+                                    )
+                    execution = "completed"
+                else:
+                    for bus in buses:
+                        require_rest(bus)
+                    print(
+                        "Keep bases clamped, comparable resting poses, clear lift path, servo power on, cutoff reachable."
                     )
-                }
-                peak_ticks = max(peak_ticks, direction * (actual[ELBOW] - baseline[ELBOW]))
-                log.write(
-                    json.dumps(
-                        {
-                            "t": round(elapsed, 3),
-                            "target": target,
-                            "actual": actual,
-                            "status": status,
-                            "elbow_telemetry_raw": telemetry,
-                            "previous_sent_elbow": last_sent_elbow,
-                        }
+                    print(
+                        "No hand on the powered follower. An error releases torque; it may settle abruptly."
                     )
-                    + "\n"
-                )
-                log.flush()
-                if telemetry["Torque_Enable"] != 1:
-                    raise RuntimeError("Elbow torque became disabled during the test.")
-                if telemetry["Goal_Position"] != last_sent_elbow:
-                    raise RuntimeError("Elbow goal read-back differs from the previous command.")
-                check_feedback(baseline, target, actual, direction, status)
-                follower.bus.sync_write("Goal_Position", target, normalize=False)
-                last_sent_elbow = target[ELBOW]
-                if elapsed >= END_SECONDS:
-                    if any(abs(actual[k] - v) > 2 * TICKS_PER_DEGREE for k, v in baseline.items()):
-                        raise RuntimeError("Follower did not return close enough to its starting position.")
-                    break
-                time.sleep(0.1)
-    finally:
-        if attempted_enable and follower.bus.is_connected:
+                    input("Press Enter for LEADER-ONLY rehearsal; follower stays torque-off: ")
+                    say("Rehearsal only. Both motors are off. Leave the leader resting until I say lift.")
+                    before = buses[0].sync_read("Present_Position", normalize=False)
+                    say(
+                        "Lift the leader gripper slowly by bending only its elbow. Keep the shoulder and wrist steady. Hold there."
+                    )
+                    time.sleep(15)
+                    after = buses[0].sync_read("Present_Position", normalize=False)
+                    emit("rehearsal", before=before, after=after)
+                    direction = infer_direction(before, after)
+                    say(
+                        "Rehearsal complete. Put the leader back down. Then press Enter with your hands clear of the follower."
+                    )
+                    print(
+                        "Follower attempts less than five degrees. Direction is not a verified upward path."
+                    )
+                    print("Cut power if it presses down, binds, or oscillates.")
+                    input("Press Enter to authorize the small follower lift and return: ")
+                    say(
+                        "Follower test in ten seconds. Leave both arms resting. Keep hands clear. Watch the follower."
+                    )
+                    time.sleep(7)
+                    for word in ("Three", "Two", "One"):
+                        say(word)
+                        time.sleep(1)
+                    say(
+                        "Starting the small lift after configuration checks. Keep clear. It returns automatically."
+                    )
+                    for i, (bus, device) in enumerate(zip(buses, (leader, follower), strict=False)):
+                        current = session.snapshot(bus, device.calibration)
+                        emit("configuration_recheck", role=i, snapshot=current)
+                        session.require_unchanged(snapshots[i], current)
+                        require_rest(bus)
+                    baseline = buses[1].sync_read("Present_Position", normalize=False)
+                    validate_path(baseline, direction, follower.calibration[ELBOW])
+                    emit("baseline", baseline=baseline, direction=direction)
+                    try:
+                        # Covers partial enable. Deadline covers preload and all torque writes.
+                        attempted_enable = True
+                        with session.Deadline(0.5):
+                            preload_and_enable(buses[1], baseline)
+                        if any(v != 1 for v in buses[1].sync_read("Torque_Enable", normalize=False).values()):
+                            raise RuntimeError("Not all follower motors enabled")
+                        start = time.monotonic()
+                        previous_loop = start
+                        last_sent = baseline[ELBOW]
+                        while True:
+                            loop_start = time.monotonic()
+                            session.require_fresh(previous_loop, loop_start)
+                            previous_loop = loop_start
+                            elapsed = loop_start - start
+                            target = target_at(baseline, direction, elapsed)
+                            read_start = time.monotonic()
+                            actual = buses[1].sync_read("Present_Position", normalize=False)
+                            read_end = time.monotonic()
+                            status = buses[1].sync_read("Status", normalize=False)
+                            telemetry = {
+                                name: buses[1].read(name, ELBOW, normalize=False)
+                                for name in (
+                                    "Goal_Position",
+                                    "Torque_Enable",
+                                    "Present_Load",
+                                    "Present_Current",
+                                    "Present_Voltage",
+                                    "Present_Temperature",
+                                )
+                            }
+                            emit(
+                                "readback",
+                                t=time.monotonic(),
+                                goal=telemetry["Goal_Position"],
+                                expected=last_sent,
+                            )
+                            emit(
+                                "sample",
+                                read_start=read_start,
+                                read_end=read_end,
+                                actual=actual,
+                                intended_target=target,
+                                previous_sent_elbow=last_sent,
+                                status=status,
+                                elbow_telemetry_raw=telemetry,
+                            )
+                            if telemetry["Torque_Enable"] != 1:
+                                raise RuntimeError("Elbow torque became disabled")
+                            if telemetry["Goal_Position"] != last_sent:
+                                raise RuntimeError("Foreign or missing goal readback")
+                            check_feedback(baseline, target, actual, direction, status)
+                            # Includes feedback, retries, serialization and log flush, not just loop entry.
+                            session.require_fresh(read_start, time.monotonic())
+                            buses[1].sync_write("Goal_Position", target, normalize=False)
+                            last_sent = target[ELBOW]
+                            emit("command", t=time.monotonic(), goal=last_sent)
+                            if elapsed >= END_SECONDS:
+                                return_error = max(abs(actual[k] - v) for k, v in baseline.items())
+                                if return_error > 2 * TICKS_PER_DEGREE:
+                                    raise RuntimeError("Return error exceeds two degrees")
+                                break
+                            time.sleep(0.1)
+                        execution = "completed"
+                    finally:
+                        shutdown_state = session.shutdown(buses[1])
+        except (Exception, KeyboardInterrupt) as exc:
+            execution = "aborted" if attempted_enable else "rejected"
+            message = str(exc) or "Ctrl+C"
+            guard_events.append(message)
+            print(f"STOPPED: {message}", flush=True)
+            # Do not synthesize speech until cleanup and finalization have been attempted.
+        if hardware.close_errors:
+            errors.extend(hardware.close_errors)
+        final_fields = {
+            "execution": execution,
+            "shutdown": shutdown_state,
+            "restoration": "not applicable",
+            "return_error_ticks": return_error,
+            "guard_events": guard_events,
+            "errors": errors,
+        }
+        provisional = dict(final_fields, event="final", version=1, run_id=recorder.run_id, seq=recorder.seq)
+        measured = evidence.analyze([*records, provisional])
+        for field in (
+            "encoder",
+            "requested_ticks",
+            "peak_ticks",
+            "hold_median_ticks",
+            "tracking_error_ticks",
+        ):
+            final_fields[field] = measured[field]
+        try:
+            emit("final", **final_fields)
+        except Exception as exc:
+            errors.append(f"Final record could not be persisted: {exc}")
+        result = evidence.analyze(records)
+        # Live knowledge remains valid if disk finalization failed, but the file stays unknown.
+        if not any(e["event"] == "final" for e in records):
+            result.update(execution=execution, shutdown=shutdown_state, physical_accepted=False)
+            result["errors"].extend(errors)
+        if inspect_only:
+            result.update(execution=execution, encoder="not attempted", shutdown="not attempted")
+            print(json.dumps(result, indent=2))
+            return result
+        if shutdown_state == "unverified":
+            print("CUT SERVO POWER NOW. Shutdown could not be verified.", flush=True)
+        message = guard_events[-1] if guard_events else evidence.format_result(result)
+        if shutdown_state == "unverified":
+            message = "Cut servo power now. Shutdown could not be verified. " + message
+        try:
+            say(message)
+        except Exception as exc:
+            result["errors"].append(f"Speech failed after cleanup: {exc}")
+            with suppress(Exception):
+                emit("communication_error", message=str(exc))
+            print("Speech failed; read the terminal result.", flush=True)
+        if execution == "completed" and shutdown_state == "verified off":
             try:
-                follower.bus.disable_torque(num_retry=3)  # Includes motor-by-motor read-back.
+                choice = (
+                    input(
+                        "Torque verified off. Observation: [u] upward/no binding/no oscillation, [n] no lift, [d] downward/binding, [o] oscillation, Enter unobserved: "
+                    )
+                    .strip()
+                    .lower()
+                )
+                observation = {
+                    "u": evidence.OBSERVATIONS[0],
+                    "n": "no lift",
+                    "d": "downward/binding",
+                    "o": "oscillation",
+                }.get(choice, "unobserved")
+                emit("observation", value=observation)
+                final_result = evidence.analyze(records)
+                final_result["errors"].extend(e for e in result["errors"] if e not in final_result["errors"])
+                if not any(e["event"] == "final" for e in records):
+                    final_result.update(execution=execution, shutdown=shutdown_state, physical_accepted=False)
+                result = final_result
+            except (EOFError, KeyboardInterrupt):
+                pass
             except Exception as exc:
-                cleanup_errors.append(str(exc))
-        for bus in reversed(buses):
-            if bus.is_connected:
-                try:
-                    bus.disconnect(disable_torque=False)
-                except Exception as exc:
-                    cleanup_errors.append(str(exc))
-        if cleanup_errors:
-            print(f"CUT SERVO POWER NOW. Shutdown could not be verified: {cleanup_errors}", flush=True)
-            say("Cut servo power now. Shutdown could not be verified.")
-            raise RuntimeError("Unverified shutdown")
-    passed, report = movement_report(peak_ticks)
-    say(f"Follower motor torque verified off. {report}")
-    return passed
+                result["errors"].append(f"Observation reporting failed: {exc}")
+        result["physical_accepted"] = result["physical_accepted"] and not result["errors"]
+        if result["observation"] != "unobserved":
+            try:
+                say(evidence.format_result(result))
+            except Exception as exc:
+                result["errors"].append(f"Speech failed after observation: {exc}")
+                result["physical_accepted"] = False
+                with suppress(Exception):
+                    emit("communication_error", message=str(exc))
+        else:
+            print(evidence.format_result(result), flush=True)
+        return result
 
 
 def main():
@@ -272,12 +394,22 @@ def main():
     parser.add_argument("--follower-port", required=True)
     parser.add_argument("--leader-id", required=True)
     parser.add_argument("--follower-id", required=True)
+    parser.add_argument(
+        "--inspect", action="store_true", help="Capture configuration without torque or setting writes"
+    )
     args = parser.parse_args()
     try:
-        if run(args) is False:
+        result = run(args)
+        if isinstance(result, dict):
+            code = (
+                0
+                if args.inspect and result["execution"] == "completed" and not result["errors"]
+                else evidence.exit_code(result)
+            )
+            raise SystemExit(code)
+        if result is False:
             raise SystemExit(2)
     except RehearsalError as exc:
-        # say() prints exactly the same message it sends to speech synthesis.
         say(str(exc))
         raise SystemExit(1) from exc
     except (Exception, KeyboardInterrupt) as exc:

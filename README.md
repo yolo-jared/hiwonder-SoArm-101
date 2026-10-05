@@ -198,13 +198,54 @@ The script refuses mismatched calibration, excessive teaching motion, and motor 
 on excessive drift/lag. Logs go to `test-logs/elbow-lift-*.log`. This is a diagnostic, not a replacement
 for calibration or a guarantee of safe motion.
 
-Completion and torque-off do not prove a lift. The final report compares measured encoder travel with
-requested travel and labels less than 80% as `INCOMPLETE`. Even an encoder-travel pass needs visual
-confirmation. Each sample also logs raw elbow load, current, voltage, temperature, torque-enable,
-and the previous command's goal read-back; these are diagnostic readings, not additional force limits.
-Voice and terminal use identical result text. Rehearsal rejection reports too little/too much movement,
-the measured angle, and the allowed range. Incomplete follower travel reports requested versus measured
-movement and exits with code 2 after verified shutdown; it is not a successful lift result.
+Completion and torque-off do not prove a lift. New versioned logs record the same-run raw controller
+configuration, calibration hash, adapter identity, separate read/write times, guard events, verified
+cleanup and a separate operator observation. No tuning or protection limits are changed.
+
+The encoder gate uses the median directed travel in the last 0.5 seconds of the actual endpoint hold:
+at least four complete samples spanning 0.3 seconds, no gap over 0.2 seconds, and at least 80% of the
+unchanged 56-tick request. Missing coverage cannot pass. An encoder pass is not physical acceptance.
+After verified torque-off, the terminal asks what you observed; Enter/EOF leaves it unobserved.
+Voice and terminal report incomplete movement rather than calling every finished run successful.
+
+Inspect both arms without changing torque, even when initially enabled:
+
+```bash
+uv run --no-sync python examples/hiwonder/elbow_lift_check.py --inspect \
+  --leader-port=/dev/cu.usbmodemLEADER --leader-id=my_leader \
+  --follower-port=/dev/cu.usbmodemFOLLOWER --follower-id=my_follower
+```
+
+Configuration is in the printed diagnostic log path. Unsupported registers and failed reads are
+explicitly different from zero. Model/firmware applicability and raw telemetry units remain unverified;
+this output does not authorize gain changes or prove the power supply is adequate.
+
+Analyze a saved log offline (no serial or plotting dependency is imported):
+
+```bash
+uv run --no-sync python examples/hiwonder/elbow_evidence.py test-logs/YOUR_RUN.log \
+  --output test-output/elbow-summary.json
+```
+
+Create the output directory first. Legacy logs retain their peak under-travel finding, but cannot prove
+sustained travel or verified shutdown. Offline analysis therefore exits nonzero for those logs.
+
+| Exit | Meaning |
+|---|---|
+| 0 | Encoder gate and cleanup passed; **not** physical acceptance. Inspect mode: capture finished without reporting errors. |
+| 1 | Rejected/aborted run, invalid evidence, or reporting failure. |
+| 2 | Completed but insufficient travel/coverage, or negative physical observation. |
+| 3 | Shutdown unverified or recovery required; takes precedence. Follow the power-cutoff instruction. |
+
+The diagnostic uses cooperative adapter locks across worktrees and Unix main-thread deadlines around
+SDK operations (including blocking flush/write), installed before handshake. Close unrelated serial tools;
+these locks cannot prevent them accessing the arms. Feedback plus logging older than 0.5 seconds aborts
+before another trajectory write. Cleanup attempts torque-off/readback at most three times per motor;
+its recorded budget is `3 × motor_count × 2 × 0.25 + 0.5` seconds (9.5 seconds for six motors).
+These are software deadlines, not hard-real-time or manufacturer-certified safety guarantees. A stuck
+OS, power loss, or process kill can prevent cleanup: the physical cutoff remains necessary.
+No test automatically retries or increases travel. Controller tuning and larger movements remain deferred
+until model-specific evidence and separately supervised qualification support them.
 
 ## Version Information
 - **Current Version**: v0.5.1 (based on upstream LeRobot v0.5.1)
