@@ -1,0 +1,115 @@
+{
+ "port": "/dev/cu.usbmodem5C821076571",
+ "dry_run": false,
+ "set_p": null,
+ "hold_s": 5.0,
+ "preflight": {
+  "P_Coefficient": 16,
+  "Torque_Enable": 0,
+  "Status": 0,
+  "Present_Voltage": 124,
+  "Present_Temperature": 50,
+  "Homing_Offset": -631,
+  "Min_Position_Limit": 1416,
+  "Max_Position_Limit": 2959,
+  "Max_Torque_Limit": 500,
+  "Torque_Limit": 500,
+  "Protection_Current": 250,
+  "Protective_Torque": 20,
+  "Protection_Time": 200,
+  "Overload_Torque": 25,
+  "Present_Position": 2119
+ },
+ "start": 2119,
+ "closed_target": 1456,
+ "contact_at_s": 1.9,
+ "contact_pos": 1491,
+ "write_errors": [
+  {
+   "seg": "close",
+   "el": 3.91,
+   "err": "r 1 tries. [ServoStatus] Overload error!"
+  },
+  {
+   "seg": "open",
+   "el": 0.0,
+   "err": "r 1 tries. [ServoStatus] Overload error!"
+  }
+ ],
+ "overload_at_s": 3.91,
+ "overload_after_contact_s": 2.01,
+ "close": {
+  "target": 1456,
+  "hold_pos_median": 1491,
+  "hold_load_first_s": -139,
+  "hold_load_last_s": null,
+  "hold_current_first_s": 112,
+  "hold_current_last_s": null,
+  "peak_load": 246,
+  "peak_current": 121,
+  "temp_end": 51
+ },
+ "open": {
+  "target": 2119,
+  "hold_pos_median": 2106,
+  "hold_load_first_s": 62,
+  "hold_load_last_s": 62,
+  "hold_current_first_s": 78,
+  "hold_current_last_s": 78,
+  "peak_load": 367,
+  "peak_current": 131,
+  "temp_end": 51
+ },
+ "torque_off_verified": true,
+ "torque_off_readback": {
+  "gripper": 0
+ },
+ "torque_off_log": [
+  {
+   "wall": "15:18:12",
+   "joint": "gripper",
+   "op": "goal=present",
+   "value": 2106,
+   "write_error": null
+  },
+  {
+   "wall": "15:18:12",
+   "joint": "gripper",
+   "op": "torque=0",
+   "write_error": null,
+   "readback": 1,
+   "status": 0
+  },
+  {
+   "wall": "15:18:12",
+   "joint": "gripper",
+   "op": "torque=0",
+   "write_error": null,
+   "readback": 0,
+   "status": 0
+  },
+  {
+   "wall": "15:18:13",
+   "joint": "gripper",
+   "op": "torque=0",
+   "write_error": null,
+   "readback": 0,
+   "status": 0
+  }
+ ],
+ "watch_s": 180.0,
+ "watch_changes": [
+  {
+   "wall": "15:18:16",
+   "after_s": 0.0,
+   "Torque_Enable": 0,
+   "Status": 0,
+   "Goal_Position": 2106,
+   "Present_Position": 2105
+  }
+ ],
+ "write_addrs_used": [
+  40,
+  42
+ ]
+}

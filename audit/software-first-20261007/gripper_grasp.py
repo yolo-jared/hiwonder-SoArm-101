@@ -43,6 +43,7 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--stop", type=int, default=1900, help="dry-run object position")
     ap.add_argument("--no-speech", action="store_true")
+    ap.add_argument("--watch", type=float, default=180.0, help="read-only torque watch after torque-off (s)")
     a = ap.parse_args()
     if a.set_p is not None and not 16 <= a.set_p <= 32:
         sys.exit("refusing: --set-p must be 16..32")
@@ -225,8 +226,36 @@ def main():
         print("ERROR:", repr(e), flush=True)
     finally:
         if torque_on:
-            ok, rb = torque_off_verified(bus, ["gripper"])
+            tlog: list = []
+            ok, rb = torque_off_verified(bus, ["gripper"], log=tlog)
             summary["torque_off_verified"], summary["torque_off_readback"] = ok, rb
+            summary["torque_off_log"] = [{k: v for k, v in e.items() if k != "t"} for e in tlog]
+            say("Torque off, confirmed. Watching it." if ok else "Warning. Gripper torque did not turn off.")
+            # read-only tail watch in the same process: does torque come back on by itself?
+            w_t0, w_last, changes = time.monotonic(), None, []
+            while time.monotonic() - w_t0 < a.watch:
+                s = {}
+                for r in ["Torque_Enable", "Status", "Goal_Position", "Present_Position"]:
+                    try:
+                        bus.port_handler.ser.reset_input_buffer()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    try:
+                        s[r] = rd(r)
+                    except Exception as e:  # noqa: BLE001
+                        s[r] = f"ERR {str(e)[-40:]}"
+                key = (s["Torque_Enable"], s["Status"])
+                if key != w_last:
+                    row = {"wall": time.strftime("%H:%M:%S"), "after_s": round(time.monotonic() - w_t0, 2), **s}
+                    changes.append(row)
+                    rec("watch", **row)
+                    print("watch:", row, flush=True)
+                    if s["Torque_Enable"] == 1 and "torque_recurred_after_s" not in summary:
+                        summary["torque_recurred_after_s"] = row["after_s"]
+                        say("Gripper torque came back on.")
+                    w_last = key
+                time.sleep(0.2)
+            summary["watch_s"], summary["watch_changes"] = a.watch, changes
         if p_prior is not None:
             try:
                 summary["p_restored_readback"] = set_p(p_prior)
@@ -238,7 +267,9 @@ def main():
         summary["write_addrs_used"] = sorted({w[0] for w in sent})
         (out / "summary.json").write_text(json.dumps(summary, indent=1, default=str))
         if torque_on:
-            say("Gripper test finished. Torque off, confirmed." if summary["torque_off_verified"]
+            recurred = "torque_recurred_after_s" in summary
+            say("Warning. Gripper torque turned back on during the watch." if recurred else
+                "Gripper test finished. Torque stayed off." if summary["torque_off_verified"]
                 else "Warning. Gripper torque did not turn off. Unplug the 12 volt power.")
         print("torque_off_verified:", summary.get("torque_off_verified"), "write addrs:", summary["write_addrs_used"])
         if a.dry_run:
