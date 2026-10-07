@@ -327,6 +327,17 @@
       ]
     }
   ],
+  "clamp_variants_commanded_error_ticks": {
+    "None": 113,
+    "2.0": 22,
+    "5.0": 56,
+    "dict_elbow_5_others_2": 56
+  },
+  "elbow_only_dict": "ValueError: max_relative_target keys must match those of goal_present_pos.",
+  "cli_parse": {
+    "--robot.max_relative_target=2.0": "2.0",
+    "--robot.max_relative_target={\"shoulder_pan\": 2.0, \"shoulder_lift\": 2.0, \"elbow_flex\": 5.0, \"wrist_flex\": 2.0, \"wrist_roll\": 2.0, \"gripper\": 2.0}": "{'shoulder_pan': 2.0, 'shoulder_lift': 2.0, 'elbow_flex': 5.0, 'wrist_flex': 2.0, 'wrist_roll': 2.0, 'gripper': 2.0}"
+  },
   "write_ledger": [
     {
       "phase": "connect+configure",

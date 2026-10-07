@@ -232,6 +232,47 @@ def main():
     led += ledger(fake, p1, p2, "teleop-loop", lock)
     res["clamp_loop_stationary_elbow"] = loop_rows
 
+    # Negative controls for the clamp: other caps must yield different commanded errors.
+    def clamp_variant(mrt):
+        f = seeded_fake()
+        fk.FakeSerial.bus = f
+        c = SOFollowerRobotConfig(port="fake://clamp", id="audit_follower", calibration_dir=tmp, max_relative_target=mrt)
+        r = SOFollower(c)
+        r.connect()
+        obs = r.get_observation()
+        action = {f"{n}.pos": obs[f"{n}.pos"] for n in names}
+        action["elbow_flex.pos"] = obs["elbow_flex.pos"] + 10.0
+        r.send_action(action)
+        err = f.get(3, 42, 2) - f.get(3, 56, 2)
+        r.disconnect()
+        return err
+
+    full_dict = {n: 2.0 for n in names} | {"elbow_flex": 5.0}
+    variants = {"None": None, "2.0": 2.0, "5.0": 5.0, "dict_elbow_5_others_2": full_dict}
+    res["clamp_variants_commanded_error_ticks"] = {k: clamp_variant(v) for k, v in variants.items()}
+    try:
+        clamp_variant({"elbow_flex": 5.0})
+        res["elbow_only_dict"] = "accepted"
+    except Exception as e:  # noqa: BLE001
+        res["elbow_only_dict"] = f"{type(e).__name__}: {e}"
+    fk.FakeSerial.bus = fake
+
+    # CLI parse through the real teleoperate config (draccus), no devices constructed.
+    import draccus
+
+    from lerobot.scripts.lerobot_teleoperate import TeleoperateConfig
+
+    base = ["--robot.type=so101_follower", "--robot.port=fake://f", "--robot.id=x", "--teleop.type=so101_leader",
+            "--teleop.port=fake://l", "--teleop.id=y", "--fps=10"]
+    cli = {}
+    for arg in ["--robot.max_relative_target=2.0", "--robot.max_relative_target=" + json.dumps(full_dict)]:
+        try:
+            v = draccus.parse(TeleoperateConfig, args=base + [arg]).robot.max_relative_target
+            cli[arg] = repr(v)
+        except BaseException as e:  # noqa: BLE001
+            cli[arg] = f"ERROR {type(e).__name__}: {e}"
+    res["cli_parse"] = cli
+
     robot.disconnect()
     p3 = len(fake.packets)
     led += ledger(fake, p2, p3, "disconnect", lock)
@@ -294,6 +335,9 @@ def main():
     print("golden green:", sum(r["match"] for r in res["golden_green"]), "/", len(res["golden_green"]))
     print("replies:", [(r["fake_reply_matches_golden"], r["match"]) for r in res["golden_replies"]])
     print("negative controls went red:", {k: v["went_red"] for k, v in negs.items()})
+    print("clamp variants (commanded elbow error, ticks, for +10 deg):", res["clamp_variants_commanded_error_ticks"])
+    print("elbow-only dict:", res["elbow_only_dict"])
+    print("cli parse:", res["cli_parse"])
 
 
 if __name__ == "__main__":
