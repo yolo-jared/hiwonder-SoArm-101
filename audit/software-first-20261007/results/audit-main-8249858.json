@@ -1,13 +1,13 @@
 {
   "label": "main-8249858",
   "provenance": {
-    "executable": "/Users/jaredsisk/project-code/hiwonder-SoArm-101/.venv/bin/python",
+    "executable": "~/project-code/hiwonder-SoArm-101/.venv/bin/python",
     "python": "3.13.5",
     "platform": "macOS-26.6.2-arm64-arm-64bit-Mach-O",
     "pyserial": "3.5",
-    "lerobot_file": "/Users/jaredsisk/project-code/hiwonder-SoArm-101/src/lerobot/__init__.py",
-    "hiwonder_file": "/Users/jaredsisk/project-code/hiwonder-SoArm-101/src/lerobot/motors/hiwonder/hiwonder.py",
-    "src_requested": "/Users/jaredsisk/project-code/hiwonder-SoArm-101/src",
+    "lerobot_file": "~/project-code/hiwonder-SoArm-101/src/lerobot/__init__.py",
+    "hiwonder_file": "~/project-code/hiwonder-SoArm-101/src/lerobot/motors/hiwonder/hiwonder.py",
+    "src_requested": "~/project-code/hiwonder-SoArm-101/src",
     "imports_from_requested_src": true,
     "sha256": {
       "hiwonder.py": "2d4d396f1d2290cb005d733c2355f0f4dfaeb40f444121a4aa94af9231784c19",

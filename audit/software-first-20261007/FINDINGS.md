@@ -27,6 +27,8 @@ Hardware state: UNKNOWN (not checked this session).
 
 Harness: `run_audit.py` + `fake_hx_bus.py` (emulator written from the HX-30HM workbook, imports nothing from lerobot).
 Raw output: `results/audit-official-a24998f.json`, `results/audit-main-8249858.json`, `results/SHA256SUMS`.
+Provenance paths in both JSONs were later rewritten with the home folder as `~` (no other change); SHA256SUMS
+refreshed for those two files.
 
 | Check | Result | Proof (in results JSON) |
 |---|---|---|

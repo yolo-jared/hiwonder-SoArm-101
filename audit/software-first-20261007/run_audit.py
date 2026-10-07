@@ -28,6 +28,11 @@ def sha256(p: Path) -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest()
 
 
+def tilde(p) -> str:
+    """Path with the home folder shown as ~, so committed results carry no username."""
+    return str(p).replace(str(Path.home()), "~", 1)
+
+
 def hx(bs):
     return [f"{b:02X}" for b in bs]
 
@@ -61,13 +66,13 @@ def main():
     res: dict = {"label": args.label}
     sdk_dir = Path(hwmod.__file__).parent / "hiwonder_sdk"
     res["provenance"] = {
-        "executable": sys.executable,
+        "executable": tilde(sys.executable),
         "python": platform.python_version(),
         "platform": platform.platform(),
         "pyserial": getattr(serial, "__version__", "?"),
-        "lerobot_file": lerobot.__file__,
-        "hiwonder_file": hwmod.__file__,
-        "src_requested": str(src),
+        "lerobot_file": tilde(lerobot.__file__),
+        "hiwonder_file": tilde(hwmod.__file__),
+        "src_requested": tilde(src),
         "imports_from_requested_src": str(Path(lerobot.__file__).resolve()).startswith(str(src)),
         "sha256": {p.name: sha256(p) for p in [Path(hwmod.__file__), *sorted(sdk_dir.glob("*.py"))]},
         "serial_Serial_is_fake": serial.Serial is fk.FakeSerial,
