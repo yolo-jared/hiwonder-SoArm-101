@@ -3,7 +3,7 @@
 Writes ONLY Goal_Position (42) and Torque_Enable (40). No limit/lock/calibration writes, no clamp.
 Goal is preloaded to Present before torque enable. Returns to start before torque-off.
 Optional --set-p N --set-p-joints a,b: writes P_Coefficient (21) on those joints only, torque off, before enable;
-restores P=16 after torque-off and reads it back (LeRobot configure() also rewrites P16 on every connect).
+restores each joint's preflight P after torque-off and reads it back (LeRobot configure() also rewrites P on every connect).
 
     python -I follower_sweep.py --port /dev/cu.usbmodemXXXX --out DIR [--amp 15] [--joints a,b]
     python -I follower_sweep.py --port fake://dry --out DIR --dry-run
@@ -27,6 +27,7 @@ DEFAULT_ORDER = ["wrist_roll", "wrist_flex", "gripper", "elbow_flex", "shoulder_
 CAL = Path.home() / ".cache/huggingface/lerobot/calibration/robots/so_follower/hiwonder_follower.json"
 TPD = 4095 / 360
 ALLOWED_WRITE_ADDRS = {40, 42}
+ACCEPTED_P = {n: ({16, 32} if n in ("shoulder_lift", "elbow_flex") else {16}) for n in NAMES}  # configure() values
 P_ADDR = 21
 OSC_PTP_TICKS = 60  # hold-phase peak-to-peak over 1 s above this = oscillation abort
 
@@ -128,11 +129,11 @@ def main():
             bus.write("Torque_Enable", n, val, normalize=False, num_retry=3)
         return {n: bus.read("Torque_Enable", n, normalize=False, num_retry=3) for n in NAMES}
 
-    def set_p(val):
+    def set_p(val):  # int, or {joint: value}
         p_phase["on"] = True
         try:
             for j in p_joints:
-                bus.write("P_Coefficient", j, val, normalize=False, num_retry=3)
+                bus.write("P_Coefficient", j, val[j] if isinstance(val, dict) else val, normalize=False, num_retry=3)
             return {j: bus.read("P_Coefficient", j, normalize=False, num_retry=3) for j in p_joints}
         finally:
             p_phase["on"] = False
@@ -152,8 +153,8 @@ def main():
         problems = []
         for n in NAMES:
             s, c = snap[n], cal[n]
-            if s["P_Coefficient"] != 16:
-                problems.append(f"{n} P={s['P_Coefficient']} (follower expected 16; is this the leader?)")
+            if s["P_Coefficient"] not in ACCEPTED_P[n]:
+                problems.append(f"{n} P={s['P_Coefficient']} (follower expects {sorted(ACCEPTED_P[n])}; is this the leader?)")
             if (s["Homing_Offset"], s["Min_Position_Limit"], s["Max_Position_Limit"]) != (c.homing_offset, c.range_min, c.range_max):
                 problems.append(f"{n} calibration mismatch vs file")
             if s["Status"]:
@@ -288,9 +289,10 @@ def main():
                 summary["torque_off_error"] = repr(e)
         if p_changed:
             try:
-                rb = set_p(16)
+                prior = {j: summary["preflight"][j]["P_Coefficient"] for j in p_joints}
+                rb = set_p(prior)
                 summary["p_restored_readback"] = rb
-                summary["p_restored_verified"] = all(v == 16 for v in rb.values())
+                summary["p_restored_verified"] = rb == prior
             except Exception as e:  # noqa: BLE001
                 summary["p_restore_error"] = repr(e)
             print("P restored readback:", summary.get("p_restored_readback"), summary.get("p_restore_error", ""), flush=True)

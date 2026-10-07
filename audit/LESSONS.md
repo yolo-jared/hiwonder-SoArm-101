@@ -21,7 +21,7 @@ local only (`test-output/follower-move-20261007/`, gitignored).
 
 | Rule | Why |
 |---|---|
-| `SOFollower.connect()` calls `configure()` (`so_follower.py:103`), which writes P16/I0/D32 with Lock 0 every connect | Settings persist in servo NVS, but any normal LeRobot connect rewrites P16 |
+| `SOFollower.connect()` calls `configure()`, which writes P (HX-30HM: 32 on shoulder_lift/elbow_flex, else 16), I0, D32 with Lock 0 every connect | Settings persist in servo NVS, but any normal LeRobot connect rewrites them |
 | Preload Goal_Position = Present_Position before Torque_Enable=1 | Stale goal registers otherwise jump the arm on enable |
 | shoulder_lift / elbow_flex "+" = downward from the resting pose | "+" moves press the gripper into the table; looks like a stall |
 | Per-joint `max_relative_target` dict must contain all 6 motor keys | Elbow-only dict raises ValueError (`robots/utils.py:91-92`) |
@@ -54,8 +54,11 @@ local only (`test-output/follower-move-20261007/`, gitignored).
 ## Open
 
 - P32 tested 2026-10-07 on elbow/shoulder (`software-first-20261007/hardware-20261007/p32/RESULT.md`): slope doubled 3.5 -> 7.0,
-  offset halved (elbow 55 -> 27, shoulder 45 -> 19 ticks), no jitter in a 45 deg lift-and-hold. P restored to 16. Making P32
-  permanent means changing `configure()` (it rewrites P16 every connect); not done. Teleop-speed jitter at P32 untested.
-  Upstream lowered P to 16 "to avoid shakiness".
+  offset halved (elbow 55 -> 27, shoulder 45 -> 19 ticks), no jitter in a 45 deg lift-and-hold. Wrist_flex P32 also halves
+  (59 -> 32 ticks), not applied in code. `configure()` now writes P32 on HX-30HM shoulder_lift/elbow_flex
+  (`HX30HM_P32_MOTORS`, test `tests/robots/test_so_follower_configure.py`); Feetech unchanged. Teleop-speed jitter at P32
+  untested. Upstream lowered P to 16 "to avoid shakiness".
+- The main checkout `.venv` editable install points at the MAIN checkout `src/`, not this branch: run with
+  `PYTHONPATH=<worktree>/src` (verify `lerobot.__file__`) or the P32 change is not in effect.
 - `follower_sweep.py --set-p N --set-p-joints a,b` writes P (addr 21) only on named joints, torque off, and restores 16 after.
 - Teleop without the 2 deg cap not yet run.

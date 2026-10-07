@@ -14,6 +14,17 @@ Writes: A [40, 42]; B [21, 40, 42]. Torque-off verified both runs. D=32, I=0 unc
 
 Settle peak-to-peak at start pose: 0 ticks on all joints in both runs. Contact sheets (1 fps) show clean lift, steady hold, return.
 
+## Wrist flex (runs C/D, ~14:40, +/-30 deg, 1.5 s ramp, 2 s hold)
+
+| Run | "+" hold error | "+" drive | "-" hold error | Hold jitter p-p | Peak error |
+|---|---|---|---|---|---|
+| C P16 | 59 (5.2 deg) | 224 | 22 | 0-4 | 85 |
+| D P32 | 32 (2.8 deg) | 241 | 12 | 0-2 | 49 |
+
+Same law: 16 + 3.5 x err at P16, 16 + 7 x err at P32. P restored to 16 (readback), torque off verified.
+Not tested at P32: shoulder_pan, wrist_roll (no gravity load; P16 hold error 0-12 ticks, about 1 deg), gripper (higher P
+means harder squeeze on a grasped object; current limits already reduced in configure()).
+
 ## Conclusion
 
 - Prediction confirmed: P is the per-tick slope (3.5 at P16, 7.0 at P32); the constant 16 is unchanged. Doubling P halved the

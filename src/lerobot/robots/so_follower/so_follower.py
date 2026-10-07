@@ -28,6 +28,8 @@ from ..robot import Robot
 from ..utils import ensure_safe_goal_position
 from .config_so_follower import SOFollowerRobotConfig
 
+HX30HM_P32_MOTORS = ("shoulder_lift", "elbow_flex")
+
 logger = logging.getLogger(__name__)
 
 
@@ -152,12 +154,15 @@ class SOFollower(Robot):
         print("Calibration saved to", self.calibration_fpath)
 
     def configure(self) -> None:
+        hx30hm = getattr(self.config, "motor_model", "sts3215") == "hx30hm"
         with self.bus.torque_disabled():
             self.bus.configure_motors()
             for motor in self.bus.motors:
                 self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
-                # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
-                self.bus.write("P_Coefficient", motor, 16)
+                # Set P_Coefficient to lower value to avoid shakiness (Default is 32).
+                # HX-30HM gravity-loaded joints keep 32: P16 holds a 45 deg elbow lift 55 ticks short, P32 27 ticks.
+                p = 32 if hx30hm and motor in HX30HM_P32_MOTORS else 16
+                self.bus.write("P_Coefficient", motor, p)
                 # Set I_Coefficient and D_Coefficient to default value 0 and 32
                 self.bus.write("I_Coefficient", motor, 0)
                 self.bus.write("D_Coefficient", motor, 32)

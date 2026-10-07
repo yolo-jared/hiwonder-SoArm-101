@@ -1,0 +1,164 @@
+{
+ "port": "/dev/cu.usbmodem5C821076571",
+ "amp_deg": 30.0,
+ "dry_run": false,
+ "set_p": 32,
+ "set_p_joints": [
+  "wrist_flex"
+ ],
+ "joints": {
+  "wrist_flex": {
+   "start": 2026,
+   "range": [
+    1000,
+    3230
+   ],
+   "segments": [
+    {
+     "label": "plus",
+     "target": 2367,
+     "requested_ticks": 341,
+     "hold_median": 2335,
+     "hold_error_ticks": 32,
+     "hold_ptp": 0,
+     "hold_load_median": 241,
+     "hold_load_ptp": 0,
+     "peak_abs_error": 49
+    },
+    {
+     "label": "minus",
+     "target": 1685,
+     "requested_ticks": -682,
+     "hold_median": 1697,
+     "hold_error_ticks": -12,
+     "hold_ptp": 0,
+     "hold_load_median": -101,
+     "hold_load_ptp": 0,
+     "peak_abs_error": 32
+    },
+    {
+     "label": "return",
+     "target": 2026,
+     "requested_ticks": 341,
+     "hold_median": 2017,
+     "hold_error_ticks": 9,
+     "hold_ptp": 2,
+     "hold_load_median": 79,
+     "hold_load_ptp": 14,
+     "peak_abs_error": 24
+    }
+   ]
+  }
+ },
+ "preflight": {
+  "shoulder_pan": {
+   "P_Coefficient": 16,
+   "D_Coefficient": 32,
+   "Torque_Enable": 0,
+   "Status": 0,
+   "Present_Voltage": 123,
+   "Homing_Offset": 99,
+   "Min_Position_Limit": 651,
+   "Max_Position_Limit": 3217,
+   "Goal_Position": 1926,
+   "Present_Position": 1926
+  },
+  "shoulder_lift": {
+   "P_Coefficient": 16,
+   "D_Coefficient": 32,
+   "Torque_Enable": 0,
+   "Status": 0,
+   "Present_Voltage": 123,
+   "Homing_Offset": 929,
+   "Min_Position_Limit": 852,
+   "Max_Position_Limit": 3205,
+   "Goal_Position": 2168,
+   "Present_Position": 2174
+  },
+  "elbow_flex": {
+   "P_Coefficient": 16,
+   "D_Coefficient": 32,
+   "Torque_Enable": 0,
+   "Status": 0,
+   "Present_Voltage": 123,
+   "Homing_Offset": 5,
+   "Min_Position_Limit": 869,
+   "Max_Position_Limit": 3046,
+   "Goal_Position": 2454,
+   "Present_Position": 2458
+  },
+  "wrist_flex": {
+   "P_Coefficient": 16,
+   "D_Coefficient": 32,
+   "Torque_Enable": 0,
+   "Status": 0,
+   "Present_Voltage": 122,
+   "Homing_Offset": -6,
+   "Min_Position_Limit": 1000,
+   "Max_Position_Limit": 3230,
+   "Goal_Position": 2046,
+   "Present_Position": 2026
+  },
+  "wrist_roll": {
+   "P_Coefficient": 16,
+   "D_Coefficient": 32,
+   "Torque_Enable": 0,
+   "Status": 0,
+   "Present_Voltage": 124,
+   "Homing_Offset": -141,
+   "Min_Position_Limit": 0,
+   "Max_Position_Limit": 4095,
+   "Goal_Position": 2100,
+   "Present_Position": 2100
+  },
+  "gripper": {
+   "P_Coefficient": 16,
+   "D_Coefficient": 32,
+   "Torque_Enable": 0,
+   "Status": 0,
+   "Present_Voltage": 124,
+   "Homing_Offset": -631,
+   "Min_Position_Limit": 1416,
+   "Max_Position_Limit": 2959,
+   "Goal_Position": 2186,
+   "Present_Position": 2186
+  }
+ },
+ "start": {
+  "shoulder_pan": 1926,
+  "shoulder_lift": 2174,
+  "elbow_flex": 2458,
+  "wrist_flex": 2026,
+  "wrist_roll": 2100,
+  "gripper": 2186
+ },
+ "p_set_readback": {
+  "wrist_flex": 32
+ },
+ "settle_ptp": {
+  "shoulder_pan": 0,
+  "shoulder_lift": 0,
+  "elbow_flex": 0,
+  "wrist_flex": 0,
+  "wrist_roll": 0,
+  "gripper": 0
+ },
+ "final_torque_readback": {
+  "shoulder_pan": 0,
+  "shoulder_lift": 0,
+  "elbow_flex": 0,
+  "wrist_flex": 0,
+  "wrist_roll": 0,
+  "gripper": 0
+ },
+ "torque_off_verified": true,
+ "p_restored_readback": {
+  "wrist_flex": 16
+ },
+ "p_restored_verified": true,
+ "write_addrs_used": [
+  21,
+  40,
+  42
+ ]
+}
