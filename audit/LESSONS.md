@@ -62,6 +62,10 @@ local only (`test-output/follower-move-20261007/`, gitignored).
     Grab one frame per index and identify by content (stand camera = whole arm; wrist camera = jaw at top right)
     immediately before recording.
 
+11. A Torque_Enable=0 write can reply OK (no error) and still not take effect (run Wa: first readback 1, second
+    attempt 0). Torque was also found ON 83 s after a verified-off (run T1, no other port user). Never trust one
+    write or one readback; re-check torque read-only right before hands go near the arm.
+
 ## Open
 
 - LEAD (untested): teleop with the leader gripper held fully closed will put the follower gripper in overload;

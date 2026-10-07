@@ -56,6 +56,22 @@ is ~75 ticks past contact, so a "fully closed" command always stalls jaw on jaw.
   used by both scripts; cue now spoken only after readback 0. Checked by `check_torque_safety.py` (negative control
   reproduces run G's error).
 
+## Torque recurrence (runs T1/T2, Wa, recurrence trials 1-5, 15:10-15:35)
+
+| Shutdowns after overload | Torque-off method | Torque found on later |
+|---|---|---|
+| G2, H, T1 | single write + single readback (no input flush) | 1 of 3 (T1: verified 0 at 15:11:11, ON at 15:12:34; no other port user, no writes) |
+| Wa, trials 1-5 | input flush before reads, two 0 readbacks 0.5 s apart, every attempt logged; then 90-180 s read-only watch | 0 of 6 |
+
+- Wa: first Torque_Enable=0 write replied without error yet readback was 1; the retry took. A torque-off write can be
+  silently ignored.
+- Leading hypothesis (not proven; 1/3 vs 0/6 is a small sample): T1's torque never went off. Its torque-off write was
+  ignored (as in Wa) and the single readback returned a false 0 (stale reply; bundled SDK has no reply LEN check,
+  FINDINGS F3). Alternative: the servo re-enabled torque on its own; not seen in 6 watched shutdowns (~10 min total).
+- Relevance: LeRobot `disable_torque()` writes Torque_Enable=0 once per motor with no readback, so a silently ignored
+  write would leave torque on after a "clean" disconnect. Matches the historical torque-recurrence symptom; unconfirmed.
+- Tissue (T1): jaw stopped at 1491, same as empty; a single tissue is below position resolution. No P32 tissue run.
+
 ## Conclusion
 
 - Prediction confirmed: P is the per-tick slope (3.5 at P16, 7.0 at P32); the constant 16 is unchanged. Doubling P halved the

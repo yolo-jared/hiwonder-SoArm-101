@@ -1,0 +1,52 @@
+[
+ {
+  "trial": 1,
+  "aborted": null,
+  "overload_at_s": 3.91,
+  "torque_off_verified": true,
+  "attempts": 2,
+  "first_readback": 0,
+  "recurred_after_s": null,
+  "temp_end": 51
+ },
+ {
+  "trial": 2,
+  "aborted": null,
+  "overload_at_s": 3.92,
+  "torque_off_verified": true,
+  "attempts": 2,
+  "first_readback": 0,
+  "recurred_after_s": null,
+  "temp_end": 51
+ },
+ {
+  "trial": 3,
+  "aborted": null,
+  "overload_at_s": 3.91,
+  "torque_off_verified": true,
+  "attempts": 2,
+  "first_readback": 0,
+  "recurred_after_s": null,
+  "temp_end": 51
+ },
+ {
+  "trial": 4,
+  "aborted": null,
+  "overload_at_s": 3.91,
+  "torque_off_verified": true,
+  "attempts": 2,
+  "first_readback": 0,
+  "recurred_after_s": null,
+  "temp_end": 51
+ },
+ {
+  "trial": 5,
+  "aborted": null,
+  "overload_at_s": 3.92,
+  "torque_off_verified": true,
+  "attempts": 2,
+  "first_readback": 0,
+  "recurred_after_s": null,
+  "temp_end": 51
+ }
+]
