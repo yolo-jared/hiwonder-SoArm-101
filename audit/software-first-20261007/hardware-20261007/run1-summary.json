@@ -1,0 +1,300 @@
+{
+ "port": "/dev/cu.usbmodem5C821076571",
+ "amp_deg": 15.0,
+ "dry_run": false,
+ "joints": {
+  "wrist_roll": {
+   "start": 2104,
+   "range": [
+    0,
+    4095
+   ],
+   "segments": [
+    {
+     "label": "plus",
+     "target": 2274,
+     "requested_ticks": 170,
+     "hold_median": 2274,
+     "hold_error_ticks": 0,
+     "peak_abs_error": 26
+    },
+    {
+     "label": "minus",
+     "target": 1934,
+     "requested_ticks": -340,
+     "hold_median": 1941,
+     "hold_error_ticks": -7,
+     "peak_abs_error": 25
+    },
+    {
+     "label": "return",
+     "target": 2104,
+     "requested_ticks": 170,
+     "hold_median": 2099,
+     "hold_error_ticks": 5,
+     "peak_abs_error": 25
+    }
+   ]
+  },
+  "wrist_flex": {
+   "start": 2074,
+   "range": [
+    1000,
+    3230
+   ],
+   "segments": [
+    {
+     "label": "plus",
+     "target": 2244,
+     "requested_ticks": 170,
+     "hold_median": 2207,
+     "hold_error_ticks": 37,
+     "peak_abs_error": 45
+    },
+    {
+     "label": "minus",
+     "target": 1904,
+     "requested_ticks": -340,
+     "hold_median": 1924,
+     "hold_error_ticks": -20,
+     "peak_abs_error": 37
+    },
+    {
+     "label": "return",
+     "target": 2074,
+     "requested_ticks": 170,
+     "hold_median": 2055,
+     "hold_error_ticks": 19,
+     "peak_abs_error": 25
+    }
+   ]
+  },
+  "gripper": {
+   "start": 2199,
+   "range": [
+    1416,
+    2959
+   ],
+   "segments": [
+    {
+     "label": "plus",
+     "target": 2369,
+     "requested_ticks": 170,
+     "hold_median": 2357,
+     "hold_error_ticks": 12,
+     "peak_abs_error": 31
+    },
+    {
+     "label": "minus",
+     "target": 2029,
+     "requested_ticks": -340,
+     "hold_median": 2040,
+     "hold_error_ticks": -11,
+     "peak_abs_error": 31
+    },
+    {
+     "label": "return",
+     "target": 2199,
+     "requested_ticks": 170,
+     "hold_median": 2186,
+     "hold_error_ticks": 13,
+     "peak_abs_error": 31
+    }
+   ]
+  },
+  "elbow_flex": {
+   "start": 2446,
+   "range": [
+    869,
+    3046
+   ],
+   "segments": [
+    {
+     "label": "plus",
+     "target": 2616,
+     "requested_ticks": 170,
+     "hold_median": 2534,
+     "hold_error_ticks": 82,
+     "peak_abs_error": 86
+    },
+    {
+     "label": "minus",
+     "target": 2276,
+     "requested_ticks": -340,
+     "hold_median": 2321,
+     "hold_error_ticks": -45,
+     "peak_abs_error": 82
+    },
+    {
+     "label": "return",
+     "target": 2446,
+     "requested_ticks": 170,
+     "hold_median": 2442,
+     "hold_error_ticks": 4,
+     "peak_abs_error": 45
+    }
+   ]
+  },
+  "shoulder_pan": {
+   "start": 1934,
+   "range": [
+    651,
+    3217
+   ],
+   "segments": [
+    {
+     "label": "plus",
+     "target": 2104,
+     "requested_ticks": 170,
+     "hold_median": 2093,
+     "hold_error_ticks": 11,
+     "peak_abs_error": 30
+    },
+    {
+     "label": "minus",
+     "target": 1764,
+     "requested_ticks": -340,
+     "hold_median": 1776,
+     "hold_error_ticks": -12,
+     "peak_abs_error": 29
+    },
+    {
+     "label": "return",
+     "target": 1934,
+     "requested_ticks": 170,
+     "hold_median": 1924,
+     "hold_error_ticks": 10,
+     "peak_abs_error": 31
+    }
+   ]
+  },
+  "shoulder_lift": {
+   "start": 2158,
+   "range": [
+    852,
+    3205
+   ],
+   "segments": [
+    {
+     "label": "plus",
+     "target": 2328,
+     "requested_ticks": 170,
+     "hold_median": 2225,
+     "hold_error_ticks": 103,
+     "peak_abs_error": 103
+    },
+    {
+     "label": "minus",
+     "target": 1988,
+     "requested_ticks": -340,
+     "hold_median": 2045,
+     "hold_error_ticks": -57,
+     "peak_abs_error": 103
+    },
+    {
+     "label": "return",
+     "target": 2158,
+     "requested_ticks": 170,
+     "hold_median": 2154,
+     "hold_error_ticks": 4,
+     "peak_abs_error": 57
+    }
+   ]
+  }
+ },
+ "preflight": {
+  "shoulder_pan": {
+   "P_Coefficient": 16,
+   "D_Coefficient": 32,
+   "Torque_Enable": 0,
+   "Status": 0,
+   "Present_Voltage": 123,
+   "Homing_Offset": 99,
+   "Min_Position_Limit": 651,
+   "Max_Position_Limit": 3217,
+   "Goal_Position": 0,
+   "Present_Position": 1934
+  },
+  "shoulder_lift": {
+   "P_Coefficient": 16,
+   "D_Coefficient": 32,
+   "Torque_Enable": 0,
+   "Status": 0,
+   "Present_Voltage": 123,
+   "Homing_Offset": 929,
+   "Min_Position_Limit": 852,
+   "Max_Position_Limit": 3205,
+   "Goal_Position": 0,
+   "Present_Position": 2158
+  },
+  "elbow_flex": {
+   "P_Coefficient": 16,
+   "D_Coefficient": 32,
+   "Torque_Enable": 0,
+   "Status": 0,
+   "Present_Voltage": 123,
+   "Homing_Offset": 5,
+   "Min_Position_Limit": 869,
+   "Max_Position_Limit": 3046,
+   "Goal_Position": 0,
+   "Present_Position": 2446
+  },
+  "wrist_flex": {
+   "P_Coefficient": 16,
+   "D_Coefficient": 32,
+   "Torque_Enable": 0,
+   "Status": 0,
+   "Present_Voltage": 122,
+   "Homing_Offset": -6,
+   "Min_Position_Limit": 1000,
+   "Max_Position_Limit": 3230,
+   "Goal_Position": 0,
+   "Present_Position": 2074
+  },
+  "wrist_roll": {
+   "P_Coefficient": 16,
+   "D_Coefficient": 32,
+   "Torque_Enable": 0,
+   "Status": 0,
+   "Present_Voltage": 123,
+   "Homing_Offset": -141,
+   "Min_Position_Limit": 0,
+   "Max_Position_Limit": 4095,
+   "Goal_Position": 0,
+   "Present_Position": 2104
+  },
+  "gripper": {
+   "P_Coefficient": 16,
+   "D_Coefficient": 32,
+   "Torque_Enable": 0,
+   "Status": 0,
+   "Present_Voltage": 124,
+   "Homing_Offset": -631,
+   "Min_Position_Limit": 1416,
+   "Max_Position_Limit": 2959,
+   "Goal_Position": 0,
+   "Present_Position": 2199
+  }
+ },
+ "start": {
+  "shoulder_pan": 1934,
+  "shoulder_lift": 2158,
+  "elbow_flex": 2446,
+  "wrist_flex": 2074,
+  "wrist_roll": 2104,
+  "gripper": 2199
+ },
+ "final_torque_readback": {
+  "shoulder_pan": 0,
+  "shoulder_lift": 0,
+  "elbow_flex": 0,
+  "wrist_flex": 0,
+  "wrist_roll": 0,
+  "gripper": 0
+ },
+ "torque_off_verified": true,
+ "write_addrs_used": [
+  40,
+  42
+ ]
+}
