@@ -27,12 +27,12 @@ def _p_writes(motor_model: str) -> dict[str, int]:
 
 
 def test_hx30hm_gravity_joints_get_p32():
-    # 45 deg lift: P16 holds 55 ticks short on the elbow, P32 holds 27 (audit/LESSONS.md)
+    # 45 deg lift: P16 holds 55 ticks short on the elbow, P32 holds 27; wrist_flex 59 -> 32 (audit/LESSONS.md)
     assert _p_writes("hx30hm") == {
         "shoulder_pan": 16,
         "shoulder_lift": 32,
         "elbow_flex": 32,
-        "wrist_flex": 16,
+        "wrist_flex": 32,
         "wrist_roll": 16,
         "gripper": 16,
     }
