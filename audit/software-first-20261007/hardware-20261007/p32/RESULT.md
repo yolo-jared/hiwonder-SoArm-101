@@ -34,6 +34,28 @@ Hold drive unchanged (friction): pan ~60, roll ~35, gripper ~60. P restored to 1
 Not tested: gripper squeezing an object. Max_Torque_Limit 500 caps grip drive at either P; P32 reaches the cap at about
 half the leader-follower gap (inference from the drive law, not measured).
 
+## Gripper free close, jaw on jaw (runs G/G2/H, ~14:45-14:55, `gripper_grasp.py`, gripper-only torque)
+
+Closing = decreasing ticks. Target range_min+40 = 1456, but the jaws meet at 1488-1491: calibration range_min (1416)
+is ~75 ticks past contact, so a "fully closed" command always stalls jaw on jaw.
+
+| Run | Contact pos | Stall drive | Stall current (raw) | Overload flagged after contact |
+|---|---|---|---|---|
+| G P16 | 1491 | 139 (= 16 + 3.5 x 35) | 115 | ~1.95 s (cleanup failed, see incident) |
+| G2 P16 | 1491 | 139 | 115 | 2.02 s |
+| H P32 | 1488 | 241 (= 16 + 7 x 32) | 204 | 1.96 s |
+
+- Overload trips ~2.0 s after the jaw stalls regardless of drive (139 vs 241): a stall timer, matching
+  Protection_Time 200 (x10 ms). Gripper protection regs (read-only, `probe-gripper.json`): Max_Torque_Limit 500,
+  Torque_Limit 500, Protection_Current 250, Protective_Torque 20, Protection_Time 200, Overload_Torque 25.
+- After overload every reply carries the error flag and LeRobot `bus.write()` raises. A Goal write still applied
+  (jaw reopened); Torque_Enable=0 writes did NOT apply (run G: 4 tries, readback 1) until the flag cleared.
+- P32 squeezes ~1.7x harder on a free close (drive 241 vs 139, current 204 vs 115).
+- Incident (run G, 14:46): old cleanup raised, torque stayed on, the spoken cue still said "Torque off". Manual
+  write at ~14:48 succeeded (readback 0). Fix: `torque_safety.torque_off_verified()` (Goal=Present, retry, readback),
+  used by both scripts; cue now spoken only after readback 0. Checked by `check_torque_safety.py` (negative control
+  reproduces run G's error).
+
 ## Conclusion
 
 - Prediction confirmed: P is the per-tick slope (3.5 at P16, 7.0 at P32); the constant 16 is unchanged. Doubling P halved the

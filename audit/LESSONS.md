@@ -51,13 +51,24 @@ local only (`test-output/follower-move-20261007/`, gitignored).
 6. Gripper `Protection_Current 250` = 250 mA in HX units, not "50%" as the code comment says (FINDINGS F4).
 7. A clamp or guard must be shown failing (negative control) before its pass counts as evidence.
 
+8. Judge torque-off ONLY by reading Torque_Enable back. After a ~2 s stall (gripper jaw on jaw/object) the servo flags
+   Overload in every reply; `bus.write()` raises even when a write applied, and Torque_Enable=0 may NOT apply while
+   flagged. Use `software-first-20261007/torque_safety.py` (Goal=Present, retry, readback); never speak "torque off"
+   before readback 0.
+9. Gripper: closing = decreasing ticks; jaws meet at ~1490 but calibration range_min is 1416, so a fully closed leader
+   always stalls the follower gripper and trips overload in ~2 s.
+
 ## Open
+
+- LEAD (untested): teleop with the leader gripper held fully closed will put the follower gripper in overload;
+  `disable_torque()` on disconnect writes motors in order (gripper last) and would likely raise, leaving gripper
+  torque on. Interim rule: open the gripper before ending teleop, then verify torque by readback.
 
 - P32 tested 2026-10-07 on elbow/shoulder (`software-first-20261007/hardware-20261007/p32/RESULT.md`): slope doubled 3.5 -> 7.0,
   offset halved (elbow 55 -> 27, shoulder 45 -> 19 ticks), no jitter in a 45 deg lift-and-hold. All six joints tested P16 vs
-  P32: every joint halves hold error and peak motion lag, none jittered. `configure()` writes P32 on HX-30HM
-  shoulder_lift/elbow_flex/wrist_flex (`HX30HM_P32_MOTORS`, test `tests/robots/test_so_follower_configure.py`); pan, roll,
-  gripper stay P16 pending owner decision. Feetech unchanged. Teleop-speed jitter and gripper grasp at P32 untested.
+  P32: every joint halves hold error and peak motion lag, none jittered. `configure()` writes P32 on every HX-30HM
+  joint except the gripper (`HX30HM_P32_MOTORS`, test `tests/robots/test_so_follower_configure.py`); gripper stays P16
+  pending an object squeeze test. Feetech unchanged. Teleop-speed jitter and gripper grasp at P32 untested.
   Upstream lowered P to 16 "to avoid shakiness".
 - The main checkout `.venv` editable install points at the MAIN checkout `src/`, not this branch: run with
   `PYTHONPATH=<worktree>/src` (verify `lerobot.__file__`) or the P32 change is not in effect.

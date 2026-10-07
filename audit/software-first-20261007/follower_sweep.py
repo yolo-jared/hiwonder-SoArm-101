@@ -22,12 +22,14 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parents[1] / "src"))
 sys.path.insert(0, str(HERE))
 
+from torque_safety import torque_off_verified  # noqa: E402
+
 NAMES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
 DEFAULT_ORDER = ["wrist_roll", "wrist_flex", "gripper", "elbow_flex", "shoulder_pan", "shoulder_lift"]
 CAL = Path.home() / ".cache/huggingface/lerobot/calibration/robots/so_follower/hiwonder_follower.json"
 TPD = 4095 / 360
 ALLOWED_WRITE_ADDRS = {40, 42}
-ACCEPTED_P = {n: ({16, 32} if n in ("shoulder_lift", "elbow_flex", "wrist_flex") else {16}) for n in NAMES}  # configure()
+ACCEPTED_P = {n: ({16} if n == "gripper" else {16, 32}) for n in NAMES}  # configure() values
 P_ADDR = 21
 OSC_PTP_TICKS = 60  # hold-phase peak-to-peak over 1 s above this = oscillation abort
 
@@ -281,12 +283,8 @@ def main():
                 pass
     finally:
         if torque_on:
-            try:
-                rb = torque(0)
-                summary["final_torque_readback"] = rb
-                summary["torque_off_verified"] = all(v == 0 for v in rb.values())
-            except Exception as e:  # noqa: BLE001
-                summary["torque_off_error"] = repr(e)
+            ok, rb = torque_off_verified(bus, NAMES)
+            summary["final_torque_readback"], summary["torque_off_verified"] = rb, ok
         if p_changed:
             try:
                 prior = {j: summary["preflight"][j]["P_Coefficient"] for j in p_joints}
@@ -300,7 +298,8 @@ def main():
         summary["write_addrs_used"] = sorted({w[1] for w in sent})
         (out / "summary.json").write_text(json.dumps(summary, indent=1, default=str))
         if torque_on:
-            say("Follower test finished. Torque off.")
+            say("Follower test finished. Torque off, confirmed." if summary.get("torque_off_verified")
+                else "Warning. Torque did not turn off on every joint. Unplug the 12 volt power.")
         print("torque_off_verified:", summary.get("torque_off_verified"), "write addrs:", summary["write_addrs_used"])
         if a.dry_run:
             print("dry-run fake write addrs:", sorted({w["addr"] for p in fake.packets for w in p.get("writes", [])}))

@@ -1,0 +1,18 @@
+{
+ "P_Coefficient": 16,
+ "Max_Torque_Limit": 500,
+ "Torque_Limit": 500,
+ "Protection_Current": 250,
+ "Protective_Torque": 20,
+ "Protection_Time": 200,
+ "Overload_Torque": 25,
+ "Over_Current_Protection_Time": 200,
+ "Unloading_Condition": 44,
+ "Max_Temperature_Limit": 70,
+ "Present_Temperature": 50,
+ "Present_Current": 43,
+ "Present_Load": 58,
+ "Present_Position": 2164,
+ "Torque_Enable": 0,
+ "Status": 0
+}

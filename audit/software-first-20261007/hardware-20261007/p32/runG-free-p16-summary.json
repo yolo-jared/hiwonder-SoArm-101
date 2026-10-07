@@ -1,0 +1,31 @@
+{
+ "port": "/dev/cu.usbmodem5C821076571",
+ "dry_run": false,
+ "set_p": null,
+ "hold_s": 4.0,
+ "preflight": {
+  "P_Coefficient": 16,
+  "Torque_Enable": 0,
+  "Status": 0,
+  "Present_Voltage": 124,
+  "Present_Temperature": 49,
+  "Homing_Offset": -631,
+  "Min_Position_Limit": 1416,
+  "Max_Position_Limit": 2959,
+  "Max_Torque_Limit": 500,
+  "Torque_Limit": 500,
+  "Protection_Current": 250,
+  "Protective_Torque": 20,
+  "Protection_Time": 200,
+  "Overload_Torque": 25,
+  "Present_Position": 2164
+ },
+ "start": 2164,
+ "closed_target": 1456,
+ "error": "RuntimeError(\"Failed to write 'Goal_Position' on id_=6 with '1456' after 1 tries. [ServoStatus] Overload error!\")",
+ "torque_off_error": "RuntimeError(\"Failed to write 'Torque_Enable' on id_=6 with '0' after 4 tries. [ServoStatus] Overload error!\")",
+ "write_addrs_used": [
+  40,
+  42
+ ]
+}

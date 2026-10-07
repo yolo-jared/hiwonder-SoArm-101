@@ -100,6 +100,7 @@ class FakeHXBus:
         self.hold_next_read_reply = False
         self._held: list[int] = []
         self.on_read = None  # optional callback(id, addr) before a read is served
+        self.on_write = None  # optional callback(id, addr, data) -> (apply, error_byte) for single WRITE
 
     # -- register helpers (little-endian, workbook row 4) --
     def put(self, id_, addr, nbytes, value):
@@ -149,10 +150,12 @@ class FakeHXBus:
             return frame(id_, 0, list(self.mem[id_][addr : addr + n]))
         if inst == 3:
             addr, data = params[0], params[1:]
-            rec["writes"] = [self._record_write(id_, addr, data)]
+            apply, err = self.on_write(id_, addr, data) if self.on_write else (True, 0)
+            rec["writes"] = [{**self._record_write(id_, addr, data), "applied": apply, "error_byte": err}]
             if id_ in self.mem:
-                self.mem[id_][addr : addr + len(data)] = bytes(data)
-                return frame(id_, 0, []) if self.mem[id_][8] else []
+                if apply:
+                    self.mem[id_][addr : addr + len(data)] = bytes(data)
+                return frame(id_, err, []) if self.mem[id_][8] else []
             return []
         if inst == 130:
             addr, n, ids = params[0], params[1], params[2:]
