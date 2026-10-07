@@ -1,0 +1,43 @@
+{
+  "source": "Hand-derived on 2026-10-07 from the HX-30HM workbook (addresses/widths/sign bits, low byte first) and protocol framing FF FF ID LEN INST PARAMS CHK, LEN = len(PARAMS)+2, CHK = ~(ID+LEN+INST+sum(PARAMS)) & 0xFF. Arithmetic shown per case; no SDK code consulted.",
+  "packets": [
+    {"name": "write elbow(3) Torque_Enable(40=0x28)=0", "call": ["write", 3, 40, 1, 0],
+     "derivation": "sum 3+4+3+40+0=50=0x32 -> ~=0xCD",
+     "bytes": ["FF", "FF", "03", "04", "03", "28", "00", "CD"]},
+    {"name": "write elbow(3) Lock(55=0x37)=0", "call": ["write", 3, 55, 1, 0],
+     "derivation": "sum 3+4+3+55+0=65=0x41 -> ~=0xBE",
+     "bytes": ["FF", "FF", "03", "04", "03", "37", "00", "BE"]},
+    {"name": "write elbow(3) P gain(21=0x15)=16", "call": ["write", 3, 21, 1, 16],
+     "derivation": "sum 3+4+3+21+16=47=0x2F -> ~=0xD0",
+     "bytes": ["FF", "FF", "03", "04", "03", "15", "10", "D0"]},
+    {"name": "write elbow(3) Goal(42=0x2A)=2487 (0x09B7, LE B7 09)", "call": ["write", 3, 42, 2, 2487],
+     "derivation": "LEN=5; sum 3+5+3+42+183+9=245=0xF5 -> ~=0x0A",
+     "bytes": ["FF", "FF", "03", "05", "03", "2A", "B7", "09", "0A"]},
+    {"name": "write elbow(3) Goal=-100 sign-magnitude bit15 -> 0x8064", "call": ["write_signed", 3, "Goal_Position", -100],
+     "derivation": "100|0x8000=0x8064 LE 64 80; sum 3+5+3+42+100+128=281 -> 0x19 -> ~=0xE6",
+     "bytes": ["FF", "FF", "03", "05", "03", "2A", "64", "80", "E6"]},
+    {"name": "write wrist_roll(5) Homing_Offset(31=0x1F)=-141 sign bit11 -> 0x088D", "call": ["write_signed", 5, "Homing_Offset", -141],
+     "derivation": "141|0x800=0x88D LE 8D 08; sum 5+5+3+31+141+8=193=0xC1 -> ~=0x3E",
+     "bytes": ["FF", "FF", "05", "05", "03", "1F", "8D", "08", "3E"]},
+    {"name": "read elbow(3) Present_Position(56=0x38) 2 bytes", "call": ["read", 3, 56, 2],
+     "derivation": "INST 2, params 38 02, LEN 4; sum 3+4+2+56+2=67=0x43 -> ~=0xBC",
+     "bytes": ["FF", "FF", "03", "04", "02", "38", "02", "BC"]},
+    {"name": "ping elbow(3)", "call": ["ping", 3],
+     "derivation": "LEN 2 INST 1; sum 3+2+1=6 -> ~=0xF9",
+     "bytes": ["FF", "FF", "03", "02", "01", "F9"]},
+    {"name": "sync write Goal ids1-6 = 2048,2048,2487,2048,2048,2000", "call": ["sync_write", 42, 2, {"1": 2048, "2": 2048, "3": 2487, "4": 2048, "5": 2048, "6": 2000}],
+     "derivation": "ID FE INST 0x83 LEN 2+18+2=22=0x16; header sum 254+22+131+42+2=451; data 9+10+195+12+13+221=460; 911&0xFF=0x8F -> ~=0x70",
+     "bytes": ["FF", "FF", "FE", "16", "83", "2A", "02", "01", "00", "08", "02", "00", "08", "03", "B7", "09", "04", "00", "08", "05", "00", "08", "06", "D0", "07", "70"]},
+    {"name": "sync read Present_Position ids1-6", "call": ["sync_read", 56, 2, [1, 2, 3, 4, 5, 6]],
+     "derivation": "ID FE INST 0x82 LEN 8+2=10; sum 254+10+130+56+2+21=473 -> 0xD9 -> ~=0x26",
+     "bytes": ["FF", "FF", "FE", "0A", "82", "38", "02", "01", "02", "03", "04", "05", "06", "26"]}
+  ],
+  "replies": [
+    {"name": "status reply id3 position 2543 (0x09EF) - checksum edge 0x00", "expect_value": 2543,
+     "derivation": "sum 3+4+0+239+9=255 -> ~=0x00",
+     "bytes": ["FF", "FF", "03", "04", "00", "EF", "09", "00"]},
+    {"name": "status reply id3 position -5 (0x8005) sign bit15", "expect_value": -5,
+     "derivation": "sum 3+4+0+5+128=140=0x8C -> ~=0x73",
+     "bytes": ["FF", "FF", "03", "04", "00", "05", "80", "73"]}
+  ]
+}
