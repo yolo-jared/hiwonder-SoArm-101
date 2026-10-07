@@ -28,7 +28,7 @@ from ..robot import Robot
 from ..utils import ensure_safe_goal_position
 from .config_so_follower import SOFollowerRobotConfig
 
-HX30HM_P32_MOTORS = ("shoulder_lift", "elbow_flex")
+HX30HM_P32_MOTORS = ("shoulder_lift", "elbow_flex", "wrist_flex")
 
 logger = logging.getLogger(__name__)
 

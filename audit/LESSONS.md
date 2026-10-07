@@ -54,10 +54,11 @@ local only (`test-output/follower-move-20261007/`, gitignored).
 ## Open
 
 - P32 tested 2026-10-07 on elbow/shoulder (`software-first-20261007/hardware-20261007/p32/RESULT.md`): slope doubled 3.5 -> 7.0,
-  offset halved (elbow 55 -> 27, shoulder 45 -> 19 ticks), no jitter in a 45 deg lift-and-hold. Wrist_flex P32 also halves
-  (59 -> 32 ticks), not applied in code. `configure()` now writes P32 on HX-30HM shoulder_lift/elbow_flex
-  (`HX30HM_P32_MOTORS`, test `tests/robots/test_so_follower_configure.py`); Feetech unchanged. Teleop-speed jitter at P32
-  untested. Upstream lowered P to 16 "to avoid shakiness".
+  offset halved (elbow 55 -> 27, shoulder 45 -> 19 ticks), no jitter in a 45 deg lift-and-hold. All six joints tested P16 vs
+  P32: every joint halves hold error and peak motion lag, none jittered. `configure()` writes P32 on HX-30HM
+  shoulder_lift/elbow_flex/wrist_flex (`HX30HM_P32_MOTORS`, test `tests/robots/test_so_follower_configure.py`); pan, roll,
+  gripper stay P16 pending owner decision. Feetech unchanged. Teleop-speed jitter and gripper grasp at P32 untested.
+  Upstream lowered P to 16 "to avoid shakiness".
 - The main checkout `.venv` editable install points at the MAIN checkout `src/`, not this branch: run with
   `PYTHONPATH=<worktree>/src` (verify `lerobot.__file__`) or the P32 change is not in effect.
 - `follower_sweep.py --set-p N --set-p-joints a,b` writes P (addr 21) only on named joints, torque off, and restores 16 after.

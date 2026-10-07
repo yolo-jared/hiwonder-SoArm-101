@@ -22,8 +22,17 @@ Settle peak-to-peak at start pose: 0 ticks on all joints in both runs. Contact s
 | D P32 | 32 (2.8 deg) | 241 | 12 | 0-2 | 49 |
 
 Same law: 16 + 3.5 x err at P16, 16 + 7 x err at P32. P restored to 16 (readback), torque off verified.
-Not tested at P32: shoulder_pan, wrist_roll (no gravity load; P16 hold error 0-12 ticks, about 1 deg), gripper (higher P
-means harder squeeze on a grasped object; current limits already reduced in configure()).
+## Shoulder pan, wrist roll, gripper (runs E/F, ~14:50, +/-20 deg, gripper in free air)
+
+| Joint | P16 hold error +/-/return | P32 hold error +/-/return | P16 peak error | P32 peak error | Jitter |
+|---|---|---|---|---|---|
+| shoulder_pan | 13 / 14 / 10 | 6 / 7 / 5 | 37 | 21 | none |
+| wrist_roll | 5 / 5 / 5 | 1 / 4 / 3 | 32 | 18 | none (load p-p 58 on entering hold, settled at 1 tick, load 0) |
+| gripper | 14 / 12 / 16 | 6 / 5 / 6 | 39 | 23 | none |
+
+Hold drive unchanged (friction): pan ~60, roll ~35, gripper ~60. P restored to 16 (readback), torque off verified.
+Not tested: gripper squeezing an object. Max_Torque_Limit 500 caps grip drive at either P; P32 reaches the cap at about
+half the leader-follower gap (inference from the drive law, not measured).
 
 ## Conclusion
 

@@ -27,7 +27,7 @@ DEFAULT_ORDER = ["wrist_roll", "wrist_flex", "gripper", "elbow_flex", "shoulder_
 CAL = Path.home() / ".cache/huggingface/lerobot/calibration/robots/so_follower/hiwonder_follower.json"
 TPD = 4095 / 360
 ALLOWED_WRITE_ADDRS = {40, 42}
-ACCEPTED_P = {n: ({16, 32} if n in ("shoulder_lift", "elbow_flex") else {16}) for n in NAMES}  # configure() values
+ACCEPTED_P = {n: ({16, 32} if n in ("shoulder_lift", "elbow_flex", "wrist_flex") else {16}) for n in NAMES}  # configure()
 P_ADDR = 21
 OSC_PTP_TICKS = 60  # hold-phase peak-to-peak over 1 s above this = oscillation abort
 
