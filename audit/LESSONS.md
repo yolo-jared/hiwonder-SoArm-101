@@ -58,6 +58,10 @@ local only (`test-output/follower-move-20261007/`, gitignored).
 9. Gripper: closing = decreasing ticks; jaws meet at ~1490 but calibration range_min is 1416, so a fully closed leader
    always stalls the follower gripper and trips overload in ~2 s.
 
+10. macOS camera indices shuffle between ffmpeg calls (two identical "icspring camera" devices plus FaceTime/iPhone).
+    Grab one frame per index and identify by content (stand camera = whole arm; wrist camera = jaw at top right)
+    immediately before recording.
+
 ## Open
 
 - LEAD (untested): teleop with the leader gripper held fully closed will put the follower gripper in overload;
