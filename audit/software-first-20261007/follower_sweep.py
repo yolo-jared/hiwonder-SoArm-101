@@ -1,7 +1,9 @@
 """Powered follower joint sweep: move each joint +/-A degrees from its start, others hold.
 
-Writes ONLY Goal_Position (42) and Torque_Enable (40). No P/limit/lock/calibration writes, no clamp.
+Writes ONLY Goal_Position (42) and Torque_Enable (40). No limit/lock/calibration writes, no clamp.
 Goal is preloaded to Present before torque enable. Returns to start before torque-off.
+Optional --set-p N --set-p-joints a,b: writes P_Coefficient (21) on those joints only, torque off, before enable;
+restores P=16 after torque-off and reads it back (LeRobot configure() also rewrites P16 on every connect).
 
     python -I follower_sweep.py --port /dev/cu.usbmodemXXXX --out DIR [--amp 15] [--joints a,b]
     python -I follower_sweep.py --port fake://dry --out DIR --dry-run
@@ -25,6 +27,8 @@ DEFAULT_ORDER = ["wrist_roll", "wrist_flex", "gripper", "elbow_flex", "shoulder_
 CAL = Path.home() / ".cache/huggingface/lerobot/calibration/robots/so_follower/hiwonder_follower.json"
 TPD = 4095 / 360
 ALLOWED_WRITE_ADDRS = {40, 42}
+P_ADDR = 21
+OSC_PTP_TICKS = 60  # hold-phase peak-to-peak over 1 s above this = oscillation abort
 
 
 def main():
@@ -36,7 +40,15 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--no-speech", action="store_true")
     ap.add_argument("--direction", choices=["both", "plus", "minus"], default="both")
+    ap.add_argument("--set-p", type=int, default=None)
+    ap.add_argument("--set-p-joints", default="")
     a = ap.parse_args()
+    p_joints = [j for j in a.set_p_joints.split(",") if j]
+    if a.set_p is not None:
+        if not 16 <= a.set_p <= 32:
+            sys.exit("refusing: --set-p must be 16..32")
+        if not p_joints or any(j not in NAMES for j in p_joints):
+            sys.exit(f"refusing: --set-p-joints must name joints from {NAMES}")
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     log = open(out / "samples.jsonl", "w")
@@ -84,9 +96,12 @@ def main():
                             calibration=cal)
     sent: list[tuple] = []
     orig_write, orig_sync = bus._write, bus._sync_write
+    p_phase = {"on": False}
+    p_ids = {NAMES.index(j) + 1 for j in p_joints}
 
     def guarded_write(addr, n, id_, v, **kw):
-        assert addr in ALLOWED_WRITE_ADDRS, f"blocked write addr {addr}"
+        ok_p = p_phase["on"] and addr == P_ADDR and id_ in p_ids
+        assert addr in ALLOWED_WRITE_ADDRS or ok_p, f"blocked write addr {addr} id {id_}"
         sent.append(("w", addr, id_, v))
         return orig_write(addr, n, id_, v, **kw)
 
@@ -113,8 +128,19 @@ def main():
             bus.write("Torque_Enable", n, val, normalize=False, num_retry=3)
         return {n: bus.read("Torque_Enable", n, normalize=False, num_retry=3) for n in NAMES}
 
-    summary = {"port": a.port, "amp_deg": a.amp, "dry_run": a.dry_run, "joints": {}}
+    def set_p(val):
+        p_phase["on"] = True
+        try:
+            for j in p_joints:
+                bus.write("P_Coefficient", j, val, normalize=False, num_retry=3)
+            return {j: bus.read("P_Coefficient", j, normalize=False, num_retry=3) for j in p_joints}
+        finally:
+            p_phase["on"] = False
+
+    summary = {"port": a.port, "amp_deg": a.amp, "dry_run": a.dry_run, "set_p": a.set_p, "set_p_joints": p_joints,
+               "joints": {}}
     torque_on = False
+    p_changed = False
     bus.port_handler.openPort()
     try:
         # ---- preflight (reads only) ----
@@ -141,12 +167,31 @@ def main():
         start = {n: snap[n]["Present_Position"] for n in NAMES}
         summary["start"] = start
 
+        if a.set_p is not None:  # torque is off here (preflight verified via snapshot)
+            assert all(snap[n]["Torque_Enable"] == 0 for n in NAMES), "torque must be off to change P"
+            p_changed = True
+            rb = set_p(a.set_p)
+            summary["p_set_readback"] = rb
+            rec("p_set", readback=rb)
+            print("P set readback:", rb, flush=True)
+            if any(v != a.set_p for v in rb.values()):
+                raise RuntimeError(f"P readback mismatch {rb}")
+
         # ---- enable with goal preloaded to present ----
         say("Follower test starting. Stand clear.")
         bus.sync_write("Goal_Position", start, normalize=False)
         torque_on = True
         rec("torque_on", readback=torque(1))
-        time.sleep(1.0)
+        # settle: 2 s at start pose, record jitter
+        st0, spos = time.monotonic(), {n: [] for n in NAMES}
+        while time.monotonic() - st0 < 2.0:
+            pos, load, status = read_all()
+            rec("settle", pos=pos, load=load, status=status)
+            for n in NAMES:
+                spos[n].append(pos[n])
+            time.sleep(0.02)
+        summary["settle_ptp"] = {n: max(v) - min(v) for n, v in spos.items()}
+        print("settle peak-to-peak ticks:", summary["settle_ptp"], flush=True)
 
         for joint in [j for j in a.joints.split(",") if j]:
             c = cal[joint]
@@ -168,7 +213,7 @@ def main():
             for target, ramp, hold, label in plan:
                 g_from = goal
                 seg_t0 = time.monotonic()
-                peak_err, holds = 0, []
+                peak_err, holds, hold_loads, win = 0, [], [], []
                 stall_since = None
                 while True:
                     el = time.monotonic() - seg_t0
@@ -188,6 +233,13 @@ def main():
                         raise RuntimeError(f"holding joint drift {drift}")
                     if el > ramp:
                         holds.append(pos[joint])
+                        hold_loads.append(load[joint])
+                    if el > ramp + 0.5:
+                        now = time.monotonic()
+                        win = [(t, p) for t, p in win if now - t <= 1.0] + [(now, pos[joint])]
+                        ptp = max(p for _, p in win) - min(p for _, p in win)
+                        if ptp > OSC_PTP_TICKS:
+                            raise RuntimeError(f"oscillation on {joint}: {ptp} ticks peak-to-peak in 1 s")
                     peak_err = max(peak_err, abs(err))
                     if abs(err) > 120 and abs(load[joint]) > 600:  # load already sign-decoded by sync_read
                         stall_since = stall_since or time.monotonic()
@@ -201,6 +253,9 @@ def main():
                 jr["segments"].append({"label": label, "target": target, "requested_ticks": target - g_from,
                                        "hold_median": hold_med,
                                        "hold_error_ticks": (target - hold_med) if hold_med is not None else None,
+                                       "hold_ptp": (max(holds) - min(holds)) if holds else None,
+                                       "hold_load_median": sorted(hold_loads)[len(hold_loads) // 2] if hold_loads else None,
+                                       "hold_load_ptp": (max(hold_loads) - min(hold_loads)) if hold_loads else None,
                                        "peak_abs_error": peak_err})
                 if stalled:
                     jr["stalled_in"] = label
@@ -231,6 +286,14 @@ def main():
                 summary["torque_off_verified"] = all(v == 0 for v in rb.values())
             except Exception as e:  # noqa: BLE001
                 summary["torque_off_error"] = repr(e)
+        if p_changed:
+            try:
+                rb = set_p(16)
+                summary["p_restored_readback"] = rb
+                summary["p_restored_verified"] = all(v == 16 for v in rb.values())
+            except Exception as e:  # noqa: BLE001
+                summary["p_restore_error"] = repr(e)
+            print("P restored readback:", summary.get("p_restored_readback"), summary.get("p_restore_error", ""), flush=True)
         bus.port_handler.closePort()
         summary["write_addrs_used"] = sorted({w[1] for w in sent})
         (out / "summary.json").write_text(json.dumps(summary, indent=1, default=str))
@@ -239,6 +302,8 @@ def main():
         print("torque_off_verified:", summary.get("torque_off_verified"), "write addrs:", summary["write_addrs_used"])
         if a.dry_run:
             print("dry-run fake write addrs:", sorted({w["addr"] for p in fake.packets for w in p.get("writes", [])}))
+            print("dry-run P writes (id, value):",
+                  [(w["id"], w["raw"]) for p in fake.packets for w in p.get("writes", []) if w["addr"] == P_ADDR])
 
 
 if __name__ == "__main__":

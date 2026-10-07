@@ -53,6 +53,9 @@ local only (`test-output/follower-move-20261007/`, gitignored).
 
 ## Open
 
-- P32 (workbook default) never tested; predicted to roughly halve the offset if slope scales with P (unmeasured). Upstream lowered
-  P to 16 "to avoid shakiness". Needs owner approval; `follower_sweep.py` preflight would refuse P32.
+- P32 tested 2026-10-07 on elbow/shoulder (`software-first-20261007/hardware-20261007/p32/RESULT.md`): slope doubled 3.5 -> 7.0,
+  offset halved (elbow 55 -> 27, shoulder 45 -> 19 ticks), no jitter in a 45 deg lift-and-hold. P restored to 16. Making P32
+  permanent means changing `configure()` (it rewrites P16 every connect); not done. Teleop-speed jitter at P32 untested.
+  Upstream lowered P to 16 "to avoid shakiness".
+- `follower_sweep.py --set-p N --set-p-joints a,b` writes P (addr 21) only on named joints, torque off, and restores 16 after.
 - Teleop without the 2 deg cap not yet run.
