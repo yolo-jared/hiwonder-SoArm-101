@@ -2,8 +2,10 @@
 
 Read before operating, testing or debugging the Hiwonder SO-ARM101 (HX-30HM servos) with this repo.
 Evidence: `audit/software-first-20261007/FINDINGS.md` (offline audit), `audit/software-first-20261007/hardware-20261007/RESULT.md`
-(powered sweeps). Fork commit `1ddcfb5`, branch `worktree-fix-macos-sw-conversion-bug-investigation-claude`. Sweep videos are
-local only (`test-output/follower-move-20261007/`, gitignored).
+(powered sweeps). Fork commit `1ddcfb5`, branch `worktree-fix-macos-sw-conversion-bug-investigation-claude`. Raw data,
+photos and videos are local only, in the main checkout's gitignored `test-output/` (`hiwonder-evidence-20261007/`,
+`follower-move-20261007/`, `p32-20261007/`). Never commit run data: `audit/.gitignore` blocks it; it can show the room,
+people or home-folder paths.
 
 ## Verdict
 

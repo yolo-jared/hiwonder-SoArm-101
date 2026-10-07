@@ -4,7 +4,8 @@ Port `/dev/cu.usbmodem5C821076571` (follower: P=16 on all six, calibration match
 Script `../follower_sweep.py`: writes only Goal_Position (42) and Torque_Enable (40); goal preloaded to present before
 enable (all six goal registers read 0 beforehand); returns to start; torque-off read back 0 on all six after every run.
 No P, limit, lock or calibration writes. No max_relative_target clamp. Camera: icspring, videos kept locally in
-`test-output/follower-move-20261007/run*.mp4` (contact sheets here).
+`test-output/follower-move-20261007/run*.mp4`. Raw data (samples, summaries, contact sheets) is local only, in the
+main checkout's gitignored `test-output/hiwonder-evidence-20261007/hardware-20261007/`.
 
 ## Results (hold error = target - median position during hold; 11.4 ticks = 1 deg)
 

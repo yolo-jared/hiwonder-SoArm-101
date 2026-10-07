@@ -1,5 +1,8 @@
 # P16 vs P32 lift comparison (2026-10-07 ~14:24-14:26, user-approved P change)
 
+Raw data (samples, summaries, probes, contact sheets) is local only, in the main checkout's gitignored
+`test-output/hiwonder-evidence-20261007/hardware-20261007/p32/`.
+
 Same session, same start pose (shoulder_lift 2166, elbow_flex 2451), 12.3 V, side camera. Each run: 45 deg lift (511 ticks,
 "minus" = up), 2 s ramp, 3 s hold, return. Run A: P16 (as configured). Run B: `--set-p 32 --set-p-joints elbow_flex,shoulder_lift`
 written with torque off before enable; P restored to 16 after torque-off, readback `{'elbow_flex': 16, 'shoulder_lift': 16}`.
