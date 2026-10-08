@@ -75,6 +75,26 @@ is ~75 ticks past contact, so a "fully closed" command always stalls jaw on jaw.
   write would leave torque on after a "clean" disconnect. Matches the historical torque-recurrence symptom; unconfirmed.
 - Tissue (T1): jaw stopped at 1491, same as empty; a single tissue is below position resolution. No P32 tissue run.
 
+### Verified torque-off, issue #2 (2026-10-08, `lerobot_disconnect_trials.py --cycles 9`)
+
+Each cycle: gripper stalls on the tissue until a write reply carries Overload, the method under test shuts the bus
+down in a child process, then a separate exclusive read-only watch reads Torque_Enable on IDs 1-6 every 0.5 s for 90 s.
+
+| Method | Cycles with Overload | Shutdown raised | Torque found on in watch | Result |
+|---|---|---|---|---|
+| new: `HiwonderMotorsBus.disconnect()` (AC7) | 9 / 9 (at 3.53-3.59 s) | 0 / 9 (0.54-0.56 s each) | 0 / 9 (177-178 samples each) | PASS; 95% upper bound on failure rate 0.283 |
+| old: `FeetechMotorsBus.disable_torque(num_retry=5)` (AC8) | 9 / 9 (at 3.55-3.58 s) | 9 / 9: `Failed to write 'Torque_Enable' on id_=6 with '0' after 6 tries. [ServoStatus] Overload error!` | 0 / 9 (harness safety net turned the gripper off, verified, before the watch) | negative control failed 9 / 9 |
+
+- What AC8 shows: under Overload the inherited method raises on every shutdown, so LeRobot's disconnect stops there
+  with gripper torque unverified and the port open. Whether its write applied is not observable here (the safety net
+  ran before any readback). Torque turning itself back on was not seen in 18 watched shutdowns today (27 min) plus 6
+  yesterday.
+- Goal probe (FA-05): with TE 0, writing Goal_Position = Present turned torque on (readback 1, 1, 1).
+- Overload latch: a stall cut off with torque off leaves Status 0x20 set (>5 min observed) and every LeRobot read
+  raises, so the first AC7 attempt stopped at cycle 2 (kept as `ac-new-attempt1`). Goal=Present cleared it within 2 s
+  in all 18 resets; the harness now clears it before every cycle and after the last.
+- Raw: main checkout `test-output/verified-torque-off-20261008/` (`ac-new`, `ac-old`, `goal-probe`, `ac-new-attempt1`).
+
 ## Conclusion
 
 - Prediction confirmed: P is the per-tick slope (3.5 at P16, 7.0 at P32); the constant 16 is unchanged. Doubling P halved the
