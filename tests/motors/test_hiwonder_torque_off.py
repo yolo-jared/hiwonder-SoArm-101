@@ -1072,12 +1072,14 @@ def test_interrupt_after_goal_write_still_turns_torque_off(clock):
     def interrupt_once(op):
         if op.reg == "Goal" and not fired:
             fired.append(op)
+            fake.port.is_using = True  # the SDK's port lock, left set by an interrupt mid-packet
             raise KeyboardInterrupt
 
     fake.on_write = interrupt_once
     with pytest.raises(KeyboardInterrupt):
         bus._handshake()
     assert fired
+    assert fake.port.is_using is False
     assert fake.servos[6].te == 0
     assert_confirmed(fake, 6)
 

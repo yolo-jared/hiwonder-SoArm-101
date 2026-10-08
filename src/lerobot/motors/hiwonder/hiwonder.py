@@ -54,6 +54,10 @@ TORQUE_OFF_POLL_S = 0.1
 GOAL_MATCH_TICKS = 20  # the two Present_Position reads must agree this closely before Goal=Present
 SIGN_BIT = 1 << 15  # sign-magnitude position registers: a raw value with bit 15 set is negative
 
+# Overload latch on connect: hardware 2026-10-08, Goal_Position=Present cleared it within 2 s in 18 of 18 resets.
+OVERLOAD_CLEAR_TIMEOUT_S = 2.5
+OTHER_FAULT_BITS = hw.ERRBIT_VOLTAGE | hw.ERRBIT_SENSOR | hw.ERRBIT_OVERHEAT | hw.ERRBIT_CURRENT | hw.ERRBIT_ANGLE
+
 logger = logging.getLogger(__name__)
 
 
@@ -141,7 +145,88 @@ class HiwonderMotorsBus(FeetechMotorsBus):
             raise RuntimeError("Some motors use an incompatible protocol.")
 
     def _handshake(self) -> None:
+        self._clear_overload_latches()
         self._assert_motors_exist()
+
+    def _clear_overload_latches(self) -> None:
+        """Clear an Overload flag left latched by a stall that torque-off cut short.
+
+        HX-30HM keeps Status Overload set with torque off (> 5 min seen). Every reply then carries the flag, so
+        `ping()` reports the motor missing and reads raise. For each motor whose Status shows Overload and no
+        other fault: Goal_Position = Present_Position (turns torque on, holding position; this clears the flag),
+        wait up to OVERLOAD_CLEAR_TIMEOUT_S, then verified torque-off on those motors, also on error or interrupt.
+        A motor with another fault bit is not written. A motor that does not reply is left to the motor check.
+        Raises RuntimeError naming each motor that is still latched or was not written.
+        """
+        latched = []
+        for name in self.motors:
+            st = self._torque_off_state(name)
+            status = self._read_status(st)
+            if status is not None and status & hw.ERRBIT_OVERLOAD:
+                latched.append((st, status))
+        if not latched:
+            return
+
+        writable = [st for st, status in latched if not status & OTHER_FAULT_BITS]
+        problems = [
+            f"{st.name} (id {st.id}): Status 0x{status:02X} has a fault besides Overload, not written"
+            for st, status in latched
+            if status & OTHER_FAULT_BITS
+        ]
+        cleared = []
+        try:
+            for st in writable:
+                goal, problem = self._clear_overload_latch(st)
+                if problem is None:
+                    cleared.append((st, goal))
+                else:
+                    problems.append(f"{st.name} (id {st.id}): {problem}")
+        finally:
+            if writable:
+                self.port_handler.is_using = False  # an interrupt mid-packet leaves the SDK port lock set
+                self.disable_torque([st.name for st in writable])
+        for st, goal in cleared:
+            logger.warning(
+                f"Overload latched on {st.name} (id {st.id}): cleared by Goal_Position=Present ({goal}, torque "
+                "briefly on); torque off confirmed"
+            )
+        if problems:
+            raise RuntimeError(
+                f"Overload latched on connect and not cleared on {len(problems)} motor(s): {'; '.join(problems)}. "
+                "Torque is off on every motor written; power-cycle the 12 V servo supply, then reconnect."
+            )
+
+    def _clear_overload_latch(self, st: _TorqueOffState) -> tuple[int | None, str | None]:
+        """Goal_Position = Present_Position, then wait for Overload to clear. Returns (goal, problem or None)."""
+        deadline = monotonic() + OVERLOAD_CLEAR_TIMEOUT_S
+        goal = self._torque_off_goal(st, deadline)
+        if goal is None:
+            return None, f"no trustworthy Present_Position ({dict(st.errors) or 'read failed'}), Goal not written"
+        addr, length = get_address(self.model_ctrl_table, st.model, "Goal_Position")
+        self._torque_off_write(st, "Goal_Position", addr, length, goal)
+        while True:
+            status = self._read_status(st)
+            if status is not None and not status & hw.ERRBIT_OVERLOAD:
+                return goal, None
+            if monotonic() >= deadline:
+                return goal, f"still latched {OVERLOAD_CLEAR_TIMEOUT_S} s after Goal_Position=Present ({goal})"
+            sleep(TORQUE_OFF_POLL_S)
+
+    def _read_status(self, st: _TorqueOffState) -> int | None:
+        """Status register OR the reply's error byte, input flushed first; None if the read failed."""
+        flushed, _ = self._torque_off_try(st, "flush input", self.port_handler.ser.reset_input_buffer)
+        if not flushed:
+            return None
+        addr, length = get_address(self.model_ctrl_table, st.model, "Status")
+        ok, result = self._torque_off_try(
+            st, "read Status", self._read, addr, length, st.id, raise_on_error=False
+        )
+        if not ok:
+            return None
+        value, comm, error = result
+        if not self._is_comm_success(comm):
+            return None
+        return value | error
 
     def _find_single_motor(self, motor: str, initial_baudrate: int | None = None) -> tuple[int, int]:
         # HX-30HM only supports protocol 0 (STS/SMS), so we always use the p0 path
