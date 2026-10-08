@@ -549,6 +549,7 @@ def test_disagreeing_present_reads_do_not_write_goal(clock):
     assert len(fake.ops("read", 6, "Present")) >= 2
     assert fake.goal_writes(6) == []
     assert_te0_after_each_bad_read(fake, 6)
+    assert_all_off(fake, range(1, 6))  # FA-21: healthy motors really ended off
 
 
 def test_short_reply_index_error_does_not_stop_the_loop(clock):
@@ -585,6 +586,7 @@ def test_failed_present_reads_never_write_goal(clock):
     assert len(fake.ops("read", 6, "Present")) >= 2
     assert fake.goal_writes(6) == []
     assert_te0_after_each_bad_read(fake, 6)
+    assert_all_off(fake, range(1, 6))  # FA-21: healthy motors really ended off
 
 
 def test_goal_written_raw_equals_present_raw(clock):
@@ -602,6 +604,7 @@ def test_present_with_sign_bit_is_not_written_as_goal(clock):
         bus.disable_torque()
     assert len(fake.ops("read", 6, "Present")) >= 2
     assert fake.goal_writes(6) == []
+    assert_all_off(fake, range(1, 6))  # FA-21: healthy motors really ended off
 
 
 @pytest.mark.parametrize(
@@ -628,6 +631,7 @@ def test_no_goal_write_when_torque_read_failed(clock):
     assert len(fake.te_reads(6)) >= 3
     assert fake.goal_writes(6) == []
     assert_te0_after_each_bad_read(fake, 6)
+    assert_all_off(fake, range(1, 6))  # FA-21: healthy motors really ended off
 
 
 def test_torque_off_follows_goal_even_past_deadline(clock):
@@ -645,6 +649,7 @@ def test_torque_off_follows_goal_even_past_deadline(clock):
     after = [(o.kind, o.id, o.reg, o.value) for o in fake.log[i + 1 : i + 3]]
     assert after == [("write", 6, "TE", 0), ("write", 6, "Lock", 0)]
     assert fake.ops("read")[-1].t < fake.log[i].t  # nothing is read after the deadline passed
+    assert_all_off(fake, range(1, 6))  # FA-21: healthy motors really ended off
 
 
 def test_goal_write_that_reenables_torque_is_followed_by_torque_off(clock):
@@ -755,6 +760,7 @@ def test_goal_guard_range_calibrated_and_uncalibrated(clock):
         bus.disable_torque()
     assert len(fake.ops("read", 6, "Present")) >= 2
     assert fake.goal_writes(6) == []
+    assert_all_off(fake, range(1, 6))  # FA-21: healthy motors really ended off
 
     bus, fake = make_bus(
         clock, {6: {"ignore_te0": 1, "present": 3500}}, calibration=calibration_for(NAMES[:5])

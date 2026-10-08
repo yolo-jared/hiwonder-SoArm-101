@@ -222,6 +222,21 @@ def phase_stall(port: str, method: str, out: Path, ramp: float = 2.0, hold_max: 
         problems = [f"id {i} torque {v[0]}" for i, v in pre.items() if v[0] != 0]
         if temp0 is None or temp0 >= TEMP_ABORT_C or volt is None or not 90 <= volt <= 140 or status0:
             problems.append(f"preflight temp={temp0} volt={volt} status={status0}")
+        # Wrong arm or stale calibration file -> wrong close target: the servo must match the file.
+        cal = bus.calibration["gripper"]
+        servo_cal = {}
+        for reg in ("Homing_Offset", "Min_Position_Limit", "Max_Position_Limit"):
+            try:
+                servo_cal[reg] = bus.read(reg, "gripper", normalize=False, num_retry=3)
+            except Exception as e:  # noqa: BLE001
+                servo_cal[reg] = f"ERR {type(e).__name__}"
+        res["servo_calibration"] = servo_cal
+        if (servo_cal["Homing_Offset"], servo_cal["Min_Position_Limit"], servo_cal["Max_Position_Limit"]) != (
+            cal.homing_offset,
+            cal.range_min,
+            cal.range_max,
+        ):
+            problems.append(f"calibration mismatch: servo {servo_cal} vs file {cal}")
         if problems:
             res["aborted"] = problems
             return res
