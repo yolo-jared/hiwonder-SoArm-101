@@ -23,6 +23,7 @@ from lerobot.robots.so_follower import (
     SO100Follower,
     SO100FollowerConfig,
 )
+from lerobot.utils.errors import DeviceNotConnectedError
 
 
 def _make_bus_mock() -> MagicMock:
@@ -109,3 +110,37 @@ def test_send_action(follower):
 
     goal_pos = {m: (i + 1) * 10 for i, m in enumerate(follower.bus.motors)}
     follower.bus.sync_write.assert_called_once_with("Goal_Position", goal_pos)
+
+
+def _follower_with_mock_parts(bus_connected: bool, cameras_connected: list[bool]) -> SO100Follower:
+    with patch("lerobot.motors.feetech.FeetechMotorsBus"):
+        robot = SO100Follower(SO100FollowerConfig(port="/dev/null"))
+    robot.bus = MagicMock(name="bus")
+    robot.bus.is_connected = bus_connected
+    robot.cameras = {f"cam{i}": MagicMock(name=f"cam{i}", is_connected=c) for i, c in enumerate(cameras_connected)}
+    return robot
+
+
+def test_disconnect_with_dropped_camera_still_disconnects_bus():
+    """FA-20: a camera that stopped reporting open makes is_connected False; the bus must still be shut down."""
+    robot = _follower_with_mock_parts(bus_connected=True, cameras_connected=[False, True])
+    robot.disconnect()
+    robot.bus.disconnect.assert_called_once_with(robot.config.disable_torque_on_disconnect)
+    robot.cameras["cam1"].disconnect.assert_called_once()
+    robot.cameras["cam0"].disconnect.assert_not_called()
+
+
+def test_disconnect_bus_error_still_disconnects_cameras():
+    """R1: the bus (torque-off) raising does not skip the cameras; the bus error is re-raised after."""
+    robot = _follower_with_mock_parts(bus_connected=True, cameras_connected=[True])
+    robot.bus.disconnect.side_effect = RuntimeError("Torque-off not confirmed")
+    with pytest.raises(RuntimeError, match="Torque-off not confirmed"):
+        robot.disconnect()
+    robot.cameras["cam0"].disconnect.assert_called_once()
+
+
+def test_disconnect_when_nothing_is_open_raises_not_connected():
+    robot = _follower_with_mock_parts(bus_connected=False, cameras_connected=[False])
+    with pytest.raises(DeviceNotConnectedError):
+        robot.disconnect()
+    robot.bus.disconnect.assert_not_called()
