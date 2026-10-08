@@ -276,6 +276,23 @@ def test_record_listener_stopped_when_arm_disconnect_raises(tmp_path, monkeypatc
     assert _shutdown(order)[:5] == ["robot", "teleop", "finalize", "say:Stop recording", "listener.stop"]
 
 
+def test_record_does_not_disconnect_devices_that_never_connected(tmp_path, monkeypatch):
+    """Devices whose connect() never ran are not disconnected (some robots' disconnect sends commands
+    without checking); the original error surfaces."""
+    order = []
+    _patch_disconnects(monkeypatch, order)
+    _instrument_record(monkeypatch, order)
+
+    def create(*args, **kwargs):
+        raise RuntimeError("dataset creation failed")
+
+    monkeypatch.setattr(LeRobotDataset, "create", create)
+    with pytest.raises(RuntimeError, match="dataset creation failed"):
+        record(_record_cfg(tmp_path))
+    assert "robot" not in order
+    assert "teleop" not in order
+
+
 def test_record_camera_dropped_still_disconnects_follower(tmp_path, monkeypatch):
     """FA-20: a robot whose is_connected turned False (a camera dropped) is still disconnected."""
     order = []

@@ -516,6 +516,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
 
     dataset = None
     listener = None
+    robot_connected = teleop_connected = False
 
     try:
         if cfg.resume:
@@ -574,8 +575,10 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 logging.info(f"Action interpolation enabled: {cfg.interpolation_multiplier}x control rate")
 
         robot.connect()
+        robot_connected = True
         if teleop is not None:
             teleop.connect()
+            teleop_connected = True
 
         listener, events = init_keyboard_listener()
 
@@ -638,15 +641,16 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 recorded_episodes += 1
     finally:
         # Arms first (torque off), then save the dataset, then the slower or optional steps; every step runs
-        # even if an earlier one raises, and the first error is re-raised after the last step. robot.disconnect
-        # is not gated on is_connected: a dropped camera makes that False while the motor bus is still on.
+        # even if an earlier one raises, and the first error is re-raised after the last step. Disconnect is
+        # gated on connect() having completed, not on is_connected: a dropped camera makes is_connected False
+        # while the motor bus is still on.
         def say_stop_recording():
             log_say("Stop recording", cfg.play_sounds, blocking=True)
 
         try:
             disconnect_all(
-                robot.disconnect,
-                teleop.disconnect if teleop is not None else None,
+                robot.disconnect if robot_connected else None,
+                teleop.disconnect if teleop_connected else None,
                 dataset.finalize if dataset else None,
                 say_stop_recording,
                 listener.stop if listener is not None and not is_headless() else None,
