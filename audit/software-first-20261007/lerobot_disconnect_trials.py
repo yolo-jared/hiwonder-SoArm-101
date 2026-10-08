@@ -511,6 +511,10 @@ def run_cycles(a) -> int:
             break
         if k < a.cycles and base_temp is not None:
             wait_cooldown(a.port, base_temp + COOLDOWN_MARGIN_C)
+    final = out / f"{a.method}-final"
+    final.mkdir(exist_ok=True)
+    if not port_holders(a.port):
+        reset_latch(a.port, final)  # leave the gripper unlatched and verified off, readable by LeRobot
     (out / f"{a.method}-cycles.json").write_text(json.dumps(cycles, indent=1))
     text, code = summarize(cycles, a.cycles, a.method)
     print(text, flush=True)

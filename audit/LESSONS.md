@@ -68,6 +68,14 @@ people or home-folder paths.
     attempt 0). Torque was also found ON 83 s after a verified-off (run T1, no other port user). Never trust one
     write or one readback; re-check torque read-only right before hands go near the arm.
 
+12. A Goal_Position write RE-ENABLES torque on HX-30HM (2026-10-08 goal probe: TE 0, Goal=Present, TE read 1,1,1).
+    Any code that writes Goal after torque-off (calibration, configure, a stray teleop frame) powers the motor again.
+
+13. Overload (Status 0x20) LATCHES with torque off when torque is cut mid-stall: it persisted >5 min with TE 0 and
+    every `bus.read` raised meanwhile (so a LeRobot reconnect after an overload shutdown is expected to fail).
+    Goal=Present (which turns torque on, see 12) cleared it within 2 s; then verified torque-off. A 12 V power cycle
+    also clears it. `lerobot_disconnect_trials.py` does this before every cycle (`clear_overload_latch`).
+
 ## Open
 
 - LEAD (untested): teleop with the leader gripper held fully closed will put the follower gripper in overload;
