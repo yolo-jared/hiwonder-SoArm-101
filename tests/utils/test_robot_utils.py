@@ -36,7 +36,9 @@ def test_disconnect_all_runs_every_step_and_raises_first_error(caplog):
     log = []
     first = RuntimeError("follower torque still on")
     with pytest.raises(RuntimeError) as e:
-        disconnect_all(step(log, "s1", first), step(log, "s2"), step(log, "s3", ValueError("leader port gone")))
+        disconnect_all(
+            step(log, "s1", first), step(log, "s2"), step(log, "s3", ValueError("leader port gone"))
+        )
     assert e.value is first
     assert log == ["s1", "s2", "s3"]
     errors = [r for r in caplog.records if r.levelno == logging.ERROR]

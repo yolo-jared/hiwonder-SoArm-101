@@ -117,7 +117,9 @@ def _follower_with_mock_parts(bus_connected: bool, cameras_connected: list[bool]
         robot = SO100Follower(SO100FollowerConfig(port="/dev/null"))
     robot.bus = MagicMock(name="bus")
     robot.bus.is_connected = bus_connected
-    robot.cameras = {f"cam{i}": MagicMock(name=f"cam{i}", is_connected=c) for i, c in enumerate(cameras_connected)}
+    robot.cameras = {
+        f"cam{i}": MagicMock(name=f"cam{i}", is_connected=c) for i, c in enumerate(cameras_connected)
+    }
     return robot
 
 

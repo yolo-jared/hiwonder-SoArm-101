@@ -144,7 +144,7 @@ from lerobot.utils.control_utils import (
 )
 from lerobot.utils.device_utils import get_safe_torch_device
 from lerobot.utils.import_utils import register_third_party_plugins
-from lerobot.utils.robot_utils import precise_sleep
+from lerobot.utils.robot_utils import disconnect_all, precise_sleep
 from lerobot.utils.utils import (
     init_logging,
     log_say,
@@ -637,18 +637,26 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
                 dataset.save_episode()
                 recorded_episodes += 1
     finally:
-        log_say("Stop recording", cfg.play_sounds, blocking=True)
+        # Arms first (torque off), then save the dataset, then the slower or optional steps; every step runs
+        # even if an earlier one raises, and the first error is re-raised after the last step. robot.disconnect
+        # is not gated on is_connected: a dropped camera makes that False while the motor bus is still on.
+        def say_stop_recording():
+            log_say("Stop recording", cfg.play_sounds, blocking=True)
 
-        if dataset:
-            dataset.finalize()
-
-        if robot.is_connected:
-            robot.disconnect()
-        if teleop and teleop.is_connected:
-            teleop.disconnect()
-
-        if not is_headless() and listener:
-            listener.stop()
+        try:
+            disconnect_all(
+                robot.disconnect,
+                teleop.disconnect if teleop is not None else None,
+                dataset.finalize if dataset else None,
+                say_stop_recording,
+                listener.stop if listener is not None and not is_headless() else None,
+            )
+        except BaseException:
+            if dataset and cfg.dataset.push_to_hub:
+                logging.error(
+                    f"Shutdown failed; the dataset is saved locally at {dataset.root} and was not pushed."
+                )
+            raise
 
         if cfg.dataset.push_to_hub:
             dataset.push_to_hub(tags=cfg.dataset.tags, private=cfg.dataset.private)

@@ -12,8 +12,41 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import platform
 import time
+from collections.abc import Callable
+
+from lerobot.utils.errors import DeviceNotConnectedError
+
+logger = logging.getLogger(__name__)
+
+
+def disconnect_all(*steps: Callable[[], object] | None) -> None:
+    """Run every shutdown step even if earlier ones fail, then re-raise the first failure.
+
+    Used to disconnect several devices so that one failing (or a Ctrl+C while it runs) does not leave the
+    others powered. Each step's exception is caught, including KeyboardInterrupt, so a further Ctrl+C only ends
+    the step in progress; the first exception is re-raised after the last step and later ones are logged at
+    ERROR. DeviceNotConnectedError means the device is already disconnected and is not treated as a failure.
+    `None` steps are skipped.
+    """
+    first: BaseException | None = None
+    for step in steps:
+        if step is None:
+            continue
+        name = getattr(step, "__qualname__", repr(step))
+        try:
+            step()
+        except DeviceNotConnectedError as e:
+            logger.info(f"{name}: already disconnected ({e})")
+        except BaseException as e:  # noqa: BLE001 - shutdown must reach every step
+            if first is None:
+                first = e
+            else:
+                logger.error(f"{name} failed during shutdown after an earlier failure: {e!r}")
+    if first is not None:
+        raise first
 
 
 def precise_sleep(seconds: float, spin_threshold: float = 0.010, sleep_margin: float = 0.005):

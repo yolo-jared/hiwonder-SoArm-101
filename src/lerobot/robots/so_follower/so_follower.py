@@ -16,13 +16,15 @@
 
 import logging
 import time
-from functools import cached_property
+from functools import cached_property, partial
 
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import OperatingMode
 from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.errors import DeviceNotConnectedError
+from lerobot.utils.robot_utils import disconnect_all
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
@@ -57,9 +59,11 @@ class SOFollower(Robot):
         }
         if motor_model == "hx30hm":
             from lerobot.motors.hiwonder import HiwonderMotorsBus
+
             self.bus = HiwonderMotorsBus(port=self.config.port, motors=motors, calibration=self.calibration)
         else:
             from lerobot.motors.feetech import FeetechMotorsBus
+
             self.bus = FeetechMotorsBus(port=self.config.port, motors=motors, calibration=self.calibration)
         self.cameras = make_cameras_from_configs(config.cameras)
 
@@ -224,11 +228,20 @@ class SOFollower(Robot):
         self.bus.sync_write("Goal_Position", goal_pos)
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
-    @check_if_not_connected
     def disconnect(self):
-        self.bus.disconnect(self.config.disable_torque_on_disconnect)
-        for cam in self.cameras.values():
-            cam.disconnect()
+        """Disconnect whatever is still open: the motor bus first (torque off), then each open camera.
+
+        Not gated on `is_connected`, which turns False as soon as one camera drops while the bus (and the arm's
+        torque) may still be on. Every part is attempted even if an earlier one raises; the first error is
+        re-raised after the rest. Raises DeviceNotConnectedError only when nothing was open.
+        """
+        steps = []
+        if self.bus.is_connected:
+            steps.append(partial(self.bus.disconnect, self.config.disable_torque_on_disconnect))
+        steps += [cam.disconnect for cam in self.cameras.values() if cam.is_connected]
+        if not steps:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+        disconnect_all(*steps)
 
         logger.info(f"{self} disconnected.")
 

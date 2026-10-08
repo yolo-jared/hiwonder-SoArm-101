@@ -101,7 +101,7 @@ from lerobot.teleoperators import (  # noqa: F401
     unitree_g1,
 )
 from lerobot.utils.import_utils import register_third_party_plugins
-from lerobot.utils.robot_utils import precise_sleep
+from lerobot.utils.robot_utils import disconnect_all, precise_sleep
 from lerobot.utils.utils import init_logging, move_cursor_up
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
@@ -239,10 +239,12 @@ def teleoperate(cfg: TeleoperateConfig):
     except KeyboardInterrupt:
         pass
     finally:
-        if cfg.display_data:
-            rr.rerun_shutdown()
-        teleop.disconnect()
-        robot.disconnect()
+        # Follower first: if the leader's adapter hangs, the follower is already off.
+        disconnect_all(
+            robot.disconnect,
+            teleop.disconnect,
+            rr.rerun_shutdown if cfg.display_data else None,
+        )
 
 
 def main():
