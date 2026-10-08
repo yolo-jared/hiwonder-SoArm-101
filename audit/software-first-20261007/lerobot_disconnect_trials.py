@@ -153,6 +153,63 @@ def summarize(cycles: list[dict], wanted: int, method: str) -> tuple[str, int]:
     return "\n".join(lines), code
 
 
+def clear_overload_latch(
+    io,
+    open_pos,
+    now=time.monotonic,
+    sleep=time.sleep,
+    settle_s=2.0,
+    interval_s=0.25,
+    wait_s=900,
+    notify=print,
+) -> dict:
+    """Clear the gripper's latched Overload status (0x20) so the next cycle starts clean.
+
+    A stall cut off mid-squeeze leaves Status 0x20 set with torque off, and every LeRobot read raises while it is
+    set (2026-10-08). Tries Goal=Present (the write re-enables torque, FA-05), then Goal=open_pos (jaw off the
+    object); any write is followed by a verified gripper torque-off whose failure propagates. If the writes do not
+    clear it, asks for a 12 V power cycle and waits up to wait_s. ok means Status 0 and all six Torque_Enable 0.
+    io: status(), present(), write_goal(v), torque_off() (verified, raises), all_te() -> {id: te}.
+    """
+    res: dict = {"status_before": io.status(), "writes": [], "cleared_by": None}
+
+    def clear_within(secs):
+        t0 = now()
+        while now() - t0 < secs:
+            if io.status() == 0:
+                return True
+            sleep(interval_s)
+        return False
+
+    if res["status_before"] == 0:
+        res["cleared_by"] = "already clear"
+    else:
+        try:
+            for label, goal in (("goal=present", io.present()), ("goal=open", open_pos)):
+                if goal is None or goal & 0x8000:
+                    continue
+                res["writes"].append(
+                    (label, goal)
+                )  # before the write: a raise mid-write still turns torque off
+                io.write_goal(goal)
+                if clear_within(settle_s):
+                    res["cleared_by"] = label
+                    break
+        finally:
+            if res["writes"]:
+                io.torque_off()
+        if res["cleared_by"] is None:
+            notify(
+                f"LATCHED: gripper Overload flag did not clear; power-cycle the 12 V servo supply "
+                f"(waiting up to {wait_s / 60:.0f} min)"
+            )
+            if clear_within(wait_s):
+                res["cleared_by"] = "power cycle"
+    res["te_after"] = io.all_te()
+    res["ok"] = res["cleared_by"] is not None and all(v == 0 for v in res["te_after"].values())
+    return res
+
+
 def port_holders(port: str) -> list[str]:
     """FA-16: PIDs holding the port (macOS has no exclusive serial lock by default)."""
     r = subprocess.run(["lsof", "-t", port], capture_output=True, text=True)
@@ -223,6 +280,12 @@ def phase_stall(port: str, method: str, out: Path, ramp: float = 2.0, hold_max: 
         if temp0 is None or temp0 >= TEMP_ABORT_C or volt is None or not 90 <= volt <= 140 or status0:
             problems.append(f"preflight temp={temp0} volt={volt} status={status0}")
         # Wrong arm or stale calibration file -> wrong close target: the servo must match the file.
+        if status0:
+            problems.append(
+                "overload latched (Status 0x20): reads raise; clear_overload_latch should have run"
+            )
+            res["aborted"] = problems
+            return res
         cal = bus.calibration["gripper"]
         servo_cal = {}
         for reg in ("Homing_Offset", "Min_Position_Limit", "Max_Position_Limit"):
@@ -324,6 +387,43 @@ def sample_bus(bus) -> dict:
     return snap
 
 
+class BusLatchIO:
+    """clear_overload_latch() adapter for the real gripper (writes: Goal_Position on ID 6, verified torque-off)."""
+
+    def __init__(self, bus):
+        self.bus = bus
+
+    def status(self):
+        return read_raw(self.bus, STATUS_REG, 1, GID)[0]
+
+    def present(self):
+        return read_raw(self.bus, PRESENT, 2, GID)[0]
+
+    def write_goal(self, v):
+        self.bus._write(GOAL, 2, GID, v, raise_on_error=False)
+
+    def torque_off(self):
+        self.bus.disable_torque(["gripper"])
+
+    def all_te(self):
+        return {i: read_raw(self.bus, TE, 1, i)[0] for i in range(1, 7)}
+
+
+def reset_latch(port: str, d: Path) -> dict:
+    """Before each cycle: clear a latched Overload (open position = the last cycle's start, else 2039)."""
+    starts = sorted(d.parent.glob("*-cycle*/stall.json"), key=lambda p: p.stat().st_mtime)
+    open_pos = next((s for p in reversed(starts) if (s := json.loads(p.read_text()).get("start"))), 2039)
+    bus = make_bus(port)
+    bus.port_handler.openPort()
+    try:
+        res = clear_overload_latch(BusLatchIO(bus), open_pos)
+    finally:
+        bus.port_handler.closePort()
+    (d / "latch_reset.json").write_text(json.dumps(res, indent=1, default=str))
+    print("LATCH", json.dumps(res, default=str), flush=True)
+    return res
+
+
 def run_cycles(a) -> int:
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -334,6 +434,9 @@ def run_cycles(a) -> int:
         d.mkdir(exist_ok=True)
         if holders := port_holders(a.port):
             sys.exit(f"refusing: port held by PIDs {holders} before cycle {k}")
+        if not reset_latch(a.port, d)["ok"]:
+            print(f"stopping: overload latch not cleared before cycle {k}", flush=True)
+            break
         say(f"Cycle {k} of {a.cycles}, {a.method} method. Hands clear of the gripper.", a.quiet)
         subprocess.run(
             [

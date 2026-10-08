@@ -126,6 +126,7 @@ check(
     text,
 )
 
+
 # Overload latch: after a stall cut off mid-squeeze, the gripper keeps Status 0x20 with torque off (2026-10-08,
 # cycle 2 refused). clear_overload_latch() must clear it between cycles, always end with the gripper verified off,
 # and fall back to waiting for a 12 V power cycle instead of stopping the run.
@@ -203,7 +204,11 @@ io = LatchIO([32] * 9 + [None] * 20 + [0])
 res, notes, c = clear(io)
 check(
     "latch: writes fail -> waits for a power cycle instead of stopping",
-    res["ok"] and res["cleared_by"] == "power cycle" and io.offs == 1 and len(notes) == 1 and "power" in notes[0],
+    res["ok"]
+    and res["cleared_by"] == "power cycle"
+    and io.offs == 1
+    and len(notes) == 1
+    and "power" in notes[0],
     (res, notes),
 )
 
