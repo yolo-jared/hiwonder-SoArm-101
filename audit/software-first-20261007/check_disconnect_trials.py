@@ -126,6 +126,107 @@ check(
     text,
 )
 
+# Overload latch: after a stall cut off mid-squeeze, the gripper keeps Status 0x20 with torque off (2026-10-08,
+# cycle 2 refused). clear_overload_latch() must clear it between cycles, always end with the gripper verified off,
+# and fall back to waiting for a 12 V power cycle instead of stopping the run.
+class LatchIO:
+    """Fake gripper: status() returns the scripted values in order (then the last one forever)."""
+
+    def __init__(self, statuses, clears_on=None, present=1700, te_after=None, off_raises=False):
+        self.statuses, self.clears_on, self.present_v = list(statuses), clears_on, present
+        self.te_after = te_after or dict.fromkeys(range(1, 7), 0)
+        self.off_raises, self.writes, self.offs, self.latched = off_raises, [], 0, None
+
+    def status(self):
+        if self.latched is False:
+            return 0
+        return self.statuses.pop(0) if len(self.statuses) > 1 else self.statuses[0]
+
+    def present(self):
+        return self.present_v
+
+    def write_goal(self, v):
+        self.writes.append(v)
+        if self.clears_on is not None and v == self.clears_on:
+            self.latched = False
+
+    def torque_off(self):
+        self.offs += 1
+        if self.off_raises:
+            raise RuntimeError("gripper torque not verified off")
+
+    def all_te(self):
+        return dict(self.te_after)
+
+
+def clear(io, **kw):
+    c = Clock()
+    notes = []
+    res = h.clear_overload_latch(io, 2039, now=c.now, sleep=c.sleep, notify=notes.append, **kw)
+    return res, notes, c
+
+
+io = LatchIO([0])
+res, notes, _ = clear(io)
+check(
+    "latch: already clear -> no writes, no torque change",
+    res["ok"] and res["cleared_by"] == "already clear" and io.writes == [] and io.offs == 0,
+    (res, io.writes, io.offs),
+)
+
+io = LatchIO([32], clears_on=1700)
+res, notes, _ = clear(io)
+check(
+    "latch: Goal=Present clears it, then gripper verified off once",
+    res["ok"] and res["cleared_by"] == "goal=present" and io.writes == [1700] and io.offs == 1 and not notes,
+    (res, io.writes, io.offs, notes),
+)
+
+io = LatchIO([32], clears_on=2039)
+res, notes, _ = clear(io)
+check(
+    "latch: only opening the jaw clears it -> Goal=open second, verified off",
+    res["ok"] and res["cleared_by"] == "goal=open" and io.writes == [1700, 2039] and io.offs == 1,
+    (res, io.writes, io.offs),
+)
+
+io = LatchIO([32], clears_on=2039, present=0x8000 | 12)
+res, notes, _ = clear(io)
+check(
+    "latch: bad Present (sign bit) is never written as a goal",
+    res["ok"] and io.writes == [2039] and io.offs == 1,
+    (res, io.writes),
+)
+
+# Writes do not clear it: ask for a power cycle and wait (bus silent while power is off), then continue.
+io = LatchIO([32] * 9 + [None] * 20 + [0])
+res, notes, c = clear(io)
+check(
+    "latch: writes fail -> waits for a power cycle instead of stopping",
+    res["ok"] and res["cleared_by"] == "power cycle" and io.offs == 1 and len(notes) == 1 and "power" in notes[0],
+    (res, notes),
+)
+
+io = LatchIO([32])
+res, notes, c = clear(io, wait_s=60)
+check(
+    "latch: never clears within the wait -> not ok (run must stop)",
+    not res["ok"] and res["cleared_by"] is None and io.offs == 1 and c.t >= 60,
+    (res, c.t),
+)
+
+io = LatchIO([32] * 9 + [0], te_after={**dict.fromkeys(range(1, 7), 0), 6: 1})
+res, notes, _ = clear(io)
+check("latch: cleared but gripper torque still on -> not ok", not res["ok"], res)
+
+io = LatchIO([32], clears_on=1700, off_raises=True)
+try:
+    clear(io)
+    raised = False
+except RuntimeError:
+    raised = True
+check("latch: unverified torque-off propagates (run stops)", raised and io.offs == 1, (raised, io.offs))
+
 # SC1: the import guard passes here and refuses when lerobot comes from elsewhere.
 check("import guard passes in this worktree", h.import_guard() == [], h.import_guard())
 real_src = h.WORKTREE_SRC
