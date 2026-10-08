@@ -62,6 +62,24 @@ fake, bus = make(refuse_torque_off=10**6)
 ok, rb = torque_off_verified(bus, ["gripper"], timeout=0.5, pause=0.05)
 results.append(("helper reports failure if never cleared", (not ok) and fake.mem[6][40] == 1, rb))
 
+# Torque comes back on after the second 0 read (during the gap). Confirmation must come from a read taken after
+# the gap, so the helper sees the 1, re-sends Torque_Enable=0 and only then reports off. The old rule (elapsed
+# time since the first 0, no read after the gap) returned "off" here with torque on.
+fake, bus = make(refuse_torque_off=0)
+status_reads = {"n": 0}
+
+
+def torque_back_on(id_, addr):
+    if id_ == 6 and addr == 65:  # Status read that follows each Torque_Enable read
+        status_reads["n"] += 1
+        if status_reads["n"] == 2:
+            fake.mem[6][40] = 1
+
+
+fake.on_read = torque_back_on
+ok, rb = torque_off_verified(bus, ["gripper"], timeout=5.0, pause=0.3)
+results.append(("helper reads again after the gap", ok and fake.mem[6][40] == 0, {"ok": ok, "rb": rb, "mem": fake.mem[6][40]}))
+
 for name, passed, detail in results:
     print("PASS" if passed else "FAIL", name, detail)
 sys.exit(0 if all(p for _, p, _ in results) else 1)
