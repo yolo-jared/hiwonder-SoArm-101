@@ -88,7 +88,9 @@ people or home-folder paths.
     `_clear_overload_latches()` before the motor check: Overload-only Status -> Goal=Present, wait <= 2.5 s, verified
     torque-off (also on error/interrupt), one WARNING per motor; another fault bit or an untrustworthy Present ->
     no write, RuntimeError saying power-cycle. Unit-tested only (`test_hiwonder_torque_off.py`, LA-01..LA-14; the
-    "Missing motor IDs: 6" trace reproduced on the fake bus); NEVER run on hardware.
+    "Missing motor IDs: 6" trace reproduced on the fake bus). Live check 2026-10-08, 1 run (`lerobot_disconnect_trials.py
+    --latch-check`): stall -> old shutdown raised -> Status 0x20 latched, all TE 0 -> `bus.connect()` returned in
+    0.67 s with the WARNING (Goal=1491) -> Status 0, 20 s read-only watch all TE 0. PASS, n=1.
 
 14. A frozen USB adapter can block `clearPort()`/`tcdrain` with no timeout and hang shutdown for both arms; the ~2 s
     torque-off bound holds only while the adapter accepts and drains writes (spec R6). Recovery: unplug the USB cable
@@ -99,7 +101,7 @@ people or home-folder paths.
 - Teleop with the leader gripper held fully closed puts the follower gripper in overload. MEASURED 2026-10-08: the
   inherited `disable_torque()` raised under overload 9/9, which stops LeRobot's shutdown with torque unverified; the
   verified `HiwonderMotorsBus.disconnect()` completed 9/9 with torque read back off. The overload latch that then
-  blocked the next connect is cleared in `connect()` (item 13); still open: a live stall -> disconnect -> connect run.
+  blocked the next connect is cleared in `connect()` (item 13); a live stall -> old shutdown -> connect run passed once (n=1).
 
 - P32 tested 2026-10-07 on elbow/shoulder (`software-first-20261007/hardware-20261007/p32/RESULT.md`): slope doubled 3.5 -> 7.0,
   offset halved (elbow 55 -> 27, shoulder 45 -> 19 ticks), no jitter in a 45 deg lift-and-hold. All six joints tested P16 vs

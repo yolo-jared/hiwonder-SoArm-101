@@ -593,6 +593,96 @@ def goal_probe(port: str, out: Path) -> int:
         print(json.dumps(res), flush=True)
 
 
+def latch_check(a) -> int:
+    """Option A live check: one stall + old shutdown (leaves Overload latched), then HiwonderMotorsBus.connect().
+
+    PASS needs all of: the latch was observed set before connect (else the check proves nothing), connect()
+    returned, the clear WARNING was logged, Status Overload is clear after, and a read-only watch sees every
+    Torque_Enable == 0. Writes by connect(): Goal_Position=Present and verified torque-off, gripper only.
+    """
+    import logging
+
+    out = Path(a.out)
+    d = out / "latch-check"
+    d.mkdir(parents=True, exist_ok=True)
+    res: dict = {}
+    if holders := port_holders(a.port):
+        sys.exit(f"refusing: port held by PIDs {holders}")
+    if not reset_latch(a.port, d)["ok"]:
+        sys.exit("refusing: gripper overload latch not cleared before the stall")
+    say("Latch check. Hands clear of the gripper.", a.quiet)
+    subprocess.run(
+        [sys.executable, "-I", __file__, "--phase", "stall", "--port", a.port, "--method", "old", "--out", str(d)],
+        check=False,
+    )
+    stall = json.loads((d / "stall.json").read_text())
+    res["stall"] = {k: stall.get(k) for k in ("overload_seen", "disconnect_error", "safety_off", "aborted")}
+    if holders := port_holders(a.port):
+        sys.exit(f"refusing: port still held by PIDs {holders} after the shutdown process exited")
+
+    bus, _ = open_watch_bus(a.port)
+    try:
+        res["before"] = sample_bus(bus)
+        res["status_before"] = read_raw(bus, STATUS_REG, 1, GID)
+    finally:
+        bus.port_handler.closePort()
+    status_before = res["status_before"][0]
+    res["latched_before"] = status_before is not None and bool(status_before & OVERLOAD)
+
+    records: list[str] = []
+    handler = logging.Handler()
+    handler.emit = lambda r: records.append(f"{r.levelname} {r.getMessage()}")
+    hw_logger = logging.getLogger("lerobot.motors.hiwonder.hiwonder")
+    hw_logger.addHandler(handler)
+    bus = make_bus(a.port)
+    t0 = time.monotonic()
+    try:
+        bus.connect()
+        res["connect"] = "ok"
+    except BaseException as e:  # noqa: BLE001
+        res["connect"] = repr(e)
+    finally:
+        res["connect_s"] = round(time.monotonic() - t0, 2)
+        hw_logger.removeHandler(handler)
+        if bus.port_handler.is_open:
+            bus.port_handler.closePort()
+    res["log"] = records
+
+    bus, enable_writes = open_watch_bus(a.port)
+    try:
+        res["status_after"] = read_raw(bus, STATUS_REG, 1, GID)
+        w = watch(partial(sample_bus, bus), a.watch_s)
+        if w["verdict"] in ("FAIL", "ABORT"):
+            enable_writes()
+            try:
+                bus.disable_torque()
+                res["safety_off"] = "verified"
+            except Exception as e:  # noqa: BLE001
+                res["safety_off"] = repr(e)
+    finally:
+        bus.port_handler.closePort()
+    (d / "watch.jsonl").write_text("\n".join(json.dumps(r) for r in w["rows"]) + "\n")
+    res.update(watch_verdict=w["verdict"], first_on=w["first_on"], unknown=w["unknown"], watch_samples=w["samples"])
+    status_after = res["status_after"][0]
+    checks = {
+        "overload seen during stall": bool(stall.get("overload_seen")),
+        "latched before connect": res["latched_before"],
+        "connect() returned": res["connect"] == "ok",
+        "clear warning logged": any("Overload latched on gripper" in r for r in records),
+        "Overload clear after": status_after is not None and not status_after & OVERLOAD,
+        "watch: all Torque_Enable 0": w["verdict"] == "PASS",
+    }
+    res["checks"] = checks
+    res["verdict"] = "PASS" if all(checks.values()) else "FAIL"
+    (d / "latch_check.json").write_text(json.dumps(res, indent=1, default=str))
+    for k, v in checks.items():
+        print(f"{'ok  ' if v else 'FAIL'} {k}", flush=True)
+    print(f"LATCH-CHECK {res['verdict']} connect={res['connect']} connect_s={res['connect_s']}", flush=True)
+    for r in records:
+        print("LOG", r, flush=True)
+    return 0 if res["verdict"] == "PASS" else 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", required=True)
@@ -603,6 +693,7 @@ def main() -> int:
     ap.add_argument("--phase", choices=["stall"])
     ap.add_argument("--self-check", action="store_true")
     ap.add_argument("--goal-probe", action="store_true")
+    ap.add_argument("--latch-check", action="store_true", help="one stall + old shutdown, then bus.connect()")
     ap.add_argument("--quiet", action="store_true", help="no spoken cues")
     a = ap.parse_args()
     if problems := import_guard():
@@ -615,6 +706,8 @@ def main() -> int:
         sys.exit("--out is required")
     if a.goal_probe:
         return goal_probe(a.port, Path(a.out))
+    if a.latch_check:
+        return latch_check(a)
     if a.phase == "stall":
         phase_stall(a.port, a.method, Path(a.out))
         return 0
