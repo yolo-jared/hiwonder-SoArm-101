@@ -264,7 +264,9 @@ class FakeServoBus:
         self.timeout_cost = timeout_cost
         self.log: list[Op] = []
         self.port = FakePort(self)
-        self.raises: dict[tuple, list[BaseException]] = {}  # (kind, id, reg) -> exceptions raised before the op
+        self.raises: dict[
+            tuple, list[BaseException]
+        ] = {}  # (kind, id, reg) -> exceptions raised before the op
         self.flush_raises_first_of_pass: BaseException | None = None
         self.on_write = None  # (op) -> None, called after a write is logged
         self._first_flush_of_pass = True
@@ -360,7 +362,9 @@ class FakeServoBus:
         return [
             o
             for o in self.log
-            if (kind is None or o.kind == kind) and (id_ is None or o.id == id_) and (reg is None or o.reg == reg)
+            if (kind is None or o.kind == kind)
+            and (id_ is None or o.id == id_)
+            and (reg is None or o.reg == reg)
         ]
 
     def te_reads(self, id_):
@@ -733,7 +737,9 @@ def test_one_warning_per_affected_motor(clock, caplog):
     caplog.set_level(logging.DEBUG, logger=hiwonder_mod.logger.name)
     with pytest.raises(RuntimeError):
         bus.disable_torque()
-    warnings = [r for r in caplog.records if r.levelno == logging.WARNING and r.name == hiwonder_mod.logger.name]
+    warnings = [
+        r for r in caplog.records if r.levelno == logging.WARNING and r.name == hiwonder_mod.logger.name
+    ]
     assert len(warnings) == 2, [r.getMessage() for r in warnings]
     assert {"wrist_roll", "gripper"} == {n for n in NAMES for r in warnings if n in r.getMessage()}
 
@@ -741,14 +747,18 @@ def test_one_warning_per_affected_motor(clock, caplog):
 def test_goal_guard_range_calibrated_and_uncalibrated(clock):
     """FA-23: calibrated range rejects Present outside it; a motor without calibration uses 0-4095, no KeyError."""
     bus, fake = make_bus(
-        clock, {6: {"ignore_te0": FOREVER, "present": 3500}}, calibration=calibration_for(["gripper"], 1000, 3000)
+        clock,
+        {6: {"ignore_te0": FOREVER, "present": 3500}},
+        calibration=calibration_for(["gripper"], 1000, 3000),
     )
     with pytest.raises(RuntimeError):
         bus.disable_torque()
     assert len(fake.ops("read", 6, "Present")) >= 2
     assert fake.goal_writes(6) == []
 
-    bus, fake = make_bus(clock, {6: {"ignore_te0": 1, "present": 3500}}, calibration=calibration_for(NAMES[:5]))
+    bus, fake = make_bus(
+        clock, {6: {"ignore_te0": 1, "present": 3500}}, calibration=calibration_for(NAMES[:5])
+    )
     bus.disable_torque()
     assert [o.value for o in fake.goal_writes(6)] == [3500]
 
@@ -778,7 +788,9 @@ def test_raise_tests_prove_healthy_motors_reached_zero(clock, caplog):
     assert_names_only(str(e.value), "gripper")
     assert_all_off(fake, range(1, 6))
     assert_confirmed(fake, 2)
-    debug = [r for r in caplog.records if r.levelno == logging.DEBUG and r.exc_info and r.exc_info[0] is TypeError]
+    debug = [
+        r for r in caplog.records if r.levelno == logging.DEBUG and r.exc_info and r.exc_info[0] is TypeError
+    ]
     assert debug
 
 

@@ -52,7 +52,7 @@ def main(port: str) -> int:
     bus.port_handler.openPort()
     rows, mismatches, no_reply = [], 0, 0
     try:
-        for i, name in enumerate(NAMES):
+        for i in range(len(NAMES)):
             for reg in REGISTERS:
                 addr, length = get_address(bus.model_ctrl_table, "hx30hm", reg)
                 raw.clear()
@@ -74,7 +74,10 @@ def main(port: str) -> int:
         bus.port_handler.closePort()
 
     print(json.dumps({"rows": rows, "mismatches": mismatches, "no_reply": no_reply}, indent=1))
-    print(f"SUMMARY: {len(rows)} reads, {mismatches} LEN mismatches, {no_reply} without a valid reply", file=sys.stderr)
+    print(
+        f"SUMMARY: {len(rows)} reads, {mismatches} LEN mismatches, {no_reply} without a valid reply",
+        file=sys.stderr,
+    )
     return 0 if mismatches == 0 and no_reply == 0 else 1
 
 
