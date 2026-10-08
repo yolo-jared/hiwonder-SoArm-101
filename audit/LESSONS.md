@@ -55,8 +55,11 @@ people or home-folder paths.
 
 8. Judge torque-off ONLY by reading Torque_Enable back. After a ~2 s stall (gripper jaw on jaw/object) the servo flags
    Overload in every reply; `bus.write()` raises even when a write applied, and Torque_Enable=0 may NOT apply while
-   flagged. Use `software-first-20261007/torque_safety.py` (Goal=Present, retry, readback); never speak "torque off"
-   before readback 0.
+   flagged. LeRobot code: `HiwonderMotorsBus.disconnect()` / `disable_torque()` now does this (writes, flushed
+   readback, confirm with a second 0 read >= 0.5 s later, Goal=Present on a non-zero read, raise within ~2 s naming
+   each motor). Hardware 2026-10-08: 9/9 overload shutdowns clean, while the inherited Feetech method raised 9/9
+   (`hardware-20261007/p32/RESULT.md`). Standalone scripts: `software-first-20261007/torque_safety.py`. Never speak
+   "torque off" before readback 0.
 9. Gripper: closing = decreasing ticks; jaws meet at ~1490 but calibration range_min is 1416, so a fully closed leader
    always stalls the follower gripper and trips overload in ~2 s.
 
@@ -69,18 +72,29 @@ people or home-folder paths.
     write or one readback; re-check torque read-only right before hands go near the arm.
 
 12. A Goal_Position write RE-ENABLES torque on HX-30HM (2026-10-08 goal probe: TE 0, Goal=Present, TE read 1,1,1).
-    Any code that writes Goal after torque-off (calibration, configure, a stray teleop frame) powers the motor again.
+    Goal writers in this repo: `SOFollower.send_action` (`robots/so_follower/so_follower.py:228`) and the verified
+    torque-off itself, only after a non-zero Torque_Enable read and always followed by Torque_Enable=0
+    (`motors/hiwonder/hiwonder.py:383`). A teleop/record frame sent after torque-off powers the motor again.
 
 13. Overload (Status 0x20) LATCHES with torque off when torque is cut mid-stall: it persisted >5 min with TE 0 and
-    every `bus.read` raised meanwhile (so a LeRobot reconnect after an overload shutdown is expected to fail).
-    Goal=Present (which turns torque on, see 12) cleared it within 2 s; then verified torque-off. A 12 V power cycle
-    also clears it. `lerobot_disconnect_trials.py` does this before every cycle (`clear_overload_latch`).
+    every reply carried the flag. Both the old and the new shutdown leave it set. Code trace (not yet run end to end):
+    `SOFollower.connect()` -> `bus.connect()` -> `_assert_motors_exist()` pings each ID; `ping()` returns None on an
+    error byte (`hiwonder.py:238-241`), so the reconnect fails with "Missing motor IDs: 6" (misleading: the gripper is
+    there); `is_calibrated` -> `read_calibration()` -> `read()` raises RuntimeError on the same byte
+    (`hiwonder.py:274-275`; observed for these three registers in AC7 attempt 1). Recovery: write Goal=Present to the
+    gripper (turns torque on, see 12; cleared it within 2 s in 18/18 resets), then verified torque-off; or power-cycle
+    the 12 V supply. `lerobot_disconnect_trials.py` does the former before every cycle (`clear_overload_latch`).
+
+14. A frozen USB adapter can block `clearPort()`/`tcdrain` with no timeout and hang shutdown for both arms; the ~2 s
+    torque-off bound holds only while the adapter accepts and drains writes (spec R6). Recovery: unplug the USB cable
+    or cut the 12 V servo supply, then re-check Torque_Enable read-only before hands go near the arm.
 
 ## Open
 
-- LEAD (untested): teleop with the leader gripper held fully closed will put the follower gripper in overload;
-  `disable_torque()` on disconnect writes motors in order (gripper last) and would likely raise, leaving gripper
-  torque on. Interim rule: open the gripper before ending teleop, then verify torque by readback.
+- Teleop with the leader gripper held fully closed puts the follower gripper in overload. MEASURED 2026-10-08: the
+  inherited `disable_torque()` raised under overload 9/9, which stops LeRobot's shutdown with torque unverified; the
+  verified `HiwonderMotorsBus.disconnect()` completed 9/9 with torque read back off. Still open: the overload latch
+  then blocks the next connect (item 13) until cleared.
 
 - P32 tested 2026-10-07 on elbow/shoulder (`software-first-20261007/hardware-20261007/p32/RESULT.md`): slope doubled 3.5 -> 7.0,
   offset halved (elbow 55 -> 27, shoulder 45 -> 19 ticks), no jitter in a 45 deg lift-and-hold. All six joints tested P16 vs

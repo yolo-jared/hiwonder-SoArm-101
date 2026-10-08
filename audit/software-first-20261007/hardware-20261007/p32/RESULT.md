@@ -89,6 +89,11 @@ down in a child process, then a separate exclusive read-only watch reads Torque_
   with gripper torque unverified and the port open. Whether its write applied is not observable here (the safety net
   ran before any readback). Torque turning itself back on was not seen in 18 watched shutdowns today (27 min) plus 6
   yesterday.
+- Limit of this proof: the hardware watch has never been observed returning FAIL (AC8 failed by raising, and the safety
+  net turned torque off before the watch). Partial evidence that it can see torque on: the same `read_raw` path read
+  TE 1 on hardware in the goal probe, the watch bus read Status 32 from hardware, and the FAIL rule is covered by the
+  offline checks. Not a live negative control.
+- Today did not reproduce the historical torque recurrence (T1, 2026-10-07): 0 of 18 watched shutdowns.
 - Goal probe (FA-05): with TE 0, writing Goal_Position = Present turned torque on (readback 1, 1, 1).
 - Overload latch: a stall cut off with torque off leaves Status 0x20 set (>5 min observed) and every LeRobot read
   raises, so the first AC7 attempt stopped at cycle 2 (kept as `ac-new-attempt1`). Goal=Present cleared it within 2 s
