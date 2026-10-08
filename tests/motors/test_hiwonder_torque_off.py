@@ -33,7 +33,7 @@ from lerobot.utils.errors import DeviceNotConnectedError
 
 pytestmark = pytest.mark.timeout(10)
 
-TE_ADDR, GOAL_ADDR, LOCK_ADDR, PRESENT_ADDR = 40, 42, 55, 56
+TE_ADDR, GOAL_ADDR, LOCK_ADDR, PRESENT_ADDR, STATUS_ADDR = 40, 42, 55, 56, 65
 
 
 def _checksum(packet: list[int]) -> int:
@@ -156,7 +156,7 @@ def test_wrong_len_reply_is_rejected_by_read_data():
 # --------------------------------------------------------------------------------------------------------------
 
 NAMES = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
-REG = {TE_ADDR: "TE", GOAL_ADDR: "Goal", LOCK_ADDR: "Lock", PRESENT_ADDR: "Present"}
+REG = {TE_ADDR: "TE", GOAL_ADDR: "Goal", LOCK_ADDR: "Lock", PRESENT_ADDR: "Present", STATUS_ADDR: "Status"}
 OVERLOAD = hw.ERRBIT_OVERLOAD
 TIMEOUT = (0, hw.COMM_RX_TIMEOUT, 0)  # what the SDK returns for a read that got no reply
 FOREVER = 10**9
@@ -210,6 +210,9 @@ class FakeServo:
     overload: bool = False  # every reply flags Overload; Torque_Enable=0 does not apply until Goal≈Present
     ignore_te0: int = 0  # number of Torque_Enable=0 writes acknowledged OK but not applied
     goal_enables_torque: bool = False
+    sticky_overload: bool = False  # Goal=Present does not clear Overload
+    extra_status: int = 0  # other Status / error-byte fault bits, e.g. hw.ERRBIT_OVERHEAT
+    absent: bool = False  # never replies
     te_read: Callable | None = None  # (servo, n, t) -> (value, comm, error)
     present_read: Callable | None = None  # (servo, n, t) -> (value, comm, error)
     write_reply: Callable | None = None  # (servo, reg, value, n) -> (comm, error, applied) | None
@@ -219,7 +222,7 @@ class FakeServo:
 
     @property
     def status(self) -> int:
-        return OVERLOAD if self.overload else 0
+        return (OVERLOAD if self.overload else 0) | self.extra_status
 
 
 class FakeSer:
@@ -302,7 +305,11 @@ class FakeServoBus:
         self._maybe_raise("read", id_, reg)
         n = s.n_reads[reg]
         s.n_reads[reg] += 1
-        if reg == "TE":
+        if s.absent:
+            value, comm, error = TIMEOUT
+        elif reg == "Status":
+            value, comm, error = s.status, 0, s.status
+        elif reg == "TE":
             value, comm, error = s.te_read(s, n, self.clock.rel) if s.te_read else (s.te, 0, s.status)
         elif reg == "Present":
             value, comm, error = (
@@ -319,6 +326,13 @@ class FakeServoBus:
 
     def read2ByteData(self, id_, addr):  # noqa: N802
         return self._read(id_, addr)
+
+    def ping(self, id_):
+        s = self.servos[id_]
+        comm, error = (hw.COMM_RX_TIMEOUT, 0) if s.absent else (hw.COMM_SUCCESS, s.status)
+        self.clock.t += self._cost(s, comm)
+        self.record("ping", id=id_, comm=comm, error=error)
+        return [], comm, error
 
     def writeReadData(self, id_, addr, length, data):  # noqa: N802
         s, reg = self.servos[id_], REG[addr]
@@ -353,7 +367,7 @@ class FakeServoBus:
             s.lock = value
         elif reg == "Goal":
             s.goal = value
-            if s.overload and abs(value - s.present) <= 20:
+            if s.overload and not s.sticky_overload and abs(value - s.present) <= 20:
                 s.overload = False  # load dropped
             if s.goal_enables_torque:
                 s.te = 1
@@ -924,3 +938,165 @@ def test_clearport_error_still_runs_torque_off(clock, monkeypatch):
     bus.disconnect()
     assert seen == [False]
     assert fake.kinds().count("closePort") == 1
+
+
+# --------------------------------------------------------------------------------------------------------------
+# Overload latch on connect (LA-01..LA-14): a stall cut off by torque-off leaves Status 0x20 set with torque off;
+# every reply then carries the flag, so ping() reports the motor missing and reads raise.
+# --------------------------------------------------------------------------------------------------------------
+
+# Hardware 2026-10-08: gripper latched with TE 0 at 1491; a Goal_Position write turns torque on (LESSONS 12).
+LATCHED = {"te": 0, "overload": True, "goal_enables_torque": True, "present": 1491, "goal": 1456}
+
+
+def latch_warnings(caplog):
+    return [r for r in caplog.records if r.levelno == logging.WARNING and "Overload latched" in r.getMessage()]
+
+
+def test_latched_gripper_is_cleared_and_connect_succeeds(clock, caplog):
+    """LA-01, LA-02, LA-11, LA-12: Goal=Present clears the latch, then verified torque-off; pings all succeed."""
+    bus, fake = make_bus(clock, {6: dict(LATCHED)})
+    bus._handshake()
+
+    s = fake.servos[6]
+    assert not s.overload
+    assert s.te == 0
+    goals = fake.goal_writes()
+    assert [(o.id, o.value) for o in goals] == [(6, 1491)]
+    goal_at = fake.log.index(goals[0])
+    assert any(o.kind == "write" and o.reg == "TE" and o.value == 0 and o.id == 6 for o in fake.log[goal_at:])
+    assert_confirmed(fake, 6)
+    assert {o.id for o in fake.ops("write")} == {6}
+    pings = fake.ops("ping")
+    assert sorted(o.id for o in pings) == list(range(1, 7))
+    assert all(o.comm == hw.COMM_SUCCESS and o.error == 0 for o in pings)
+    status_reads = [i for i, o in enumerate(fake.log) if o.kind == "read" and o.reg == "Status"]
+    assert status_reads
+    assert all(fake.log[i - 1].kind == "flush" for i in status_reads)
+    warns = latch_warnings(caplog)
+    assert len(warns) == 1
+    msg = warns[0].getMessage()
+    assert "gripper" in msg and "torque briefly on" in msg
+
+
+def test_handshake_without_latch_clear_reports_gripper_missing(clock, monkeypatch):
+    """Negative control: the inherited handshake fails on a latched gripper with a misleading 'Missing' error."""
+    bus, fake = make_bus(clock, {6: dict(LATCHED)})
+    monkeypatch.setattr(bus, "_clear_overload_latches", lambda: None, raising=False)
+    with pytest.raises(RuntimeError, match=r"Missing motor IDs:\n  - 6"):
+        bus._handshake()
+
+
+def test_healthy_handshake_writes_nothing(clock):
+    """LA-09: no latch, no writes (healthy follower and leader connects are unchanged)."""
+    bus, fake = make_bus(clock)
+    bus._handshake()
+    assert fake.ops("write") == []
+    assert {o.reg for o in fake.ops("read")} <= {"Status"}
+
+
+@pytest.mark.parametrize(
+    "bit", [hw.ERRBIT_OVERHEAT, hw.ERRBIT_VOLTAGE, hw.ERRBIT_ANGLE, hw.ERRBIT_CURRENT, hw.ERRBIT_SENSOR]
+)
+def test_other_fault_bit_is_never_written(clock, bit):
+    """LA-03: Overload plus any other fault bit gets no torque-on write; the error names the motor."""
+    bus, fake = make_bus(clock, {6: {**LATCHED, "extra_status": bit}})
+    with pytest.raises(RuntimeError) as e:
+        bus._handshake()
+    assert fake.ops("write") == []
+    msg = str(e.value)
+    assert "gripper" in msg and "shoulder_pan" not in msg
+    assert "power-cycle" in msg
+
+
+def disagreeing(s, n, t):
+    return (1491 if n % 2 == 0 else 1600), 0, s.status
+
+
+@pytest.mark.parametrize(
+    "servo_kw, calibration",
+    [
+        ({"present": 0x8000 | 5}, None),
+        ({"present_read": disagreeing}, None),
+        ({"present": 1000}, calibration_for(["gripper"], lo=1416, hi=2100)),
+        ({"present_read": timeout_read}, None),
+    ],
+    ids=["sign-bit", "reads-disagree", "outside-calibration", "read-fails"],
+)
+def test_invalid_present_gets_no_goal_write(clock, servo_kw, calibration):
+    """LA-04: no trustworthy Present_Position, no Goal write; torque confirmed off and the error names the motor."""
+    bus, fake = make_bus(clock, {6: {**LATCHED, **servo_kw}}, calibration=calibration)
+    with pytest.raises(RuntimeError) as e:
+        bus._handshake()
+    assert fake.goal_writes() == []
+    assert fake.servos[6].te == 0
+    assert_confirmed(fake, 6)
+    msg = str(e.value)
+    assert "gripper" in msg and "power-cycle" in msg
+
+
+def test_latch_not_cleared_raises_after_torque_off(clock):
+    """LA-05, LA-14: Goal written, latch stays; torque-off still confirmed, then a bounded 'still latched' error."""
+    bus, fake = make_bus(clock, {6: {**LATCHED, "sticky_overload": True}})
+
+    def te_zero_applies(op):
+        if op.id == 6 and op.reg == "TE" and op.value == 0:
+            fake.servos[6].te = 0
+
+    fake.on_write = te_zero_applies
+    with pytest.raises(RuntimeError) as e:
+        bus._handshake()
+    assert [o.value for o in fake.goal_writes(6)][:1] == [1491]
+    assert fake.servos[6].te == 0
+    assert_confirmed(fake, 6)
+    msg = str(e.value)
+    assert "gripper" in msg and "still latched" in msg and "power-cycle" in msg
+    assert clock.rel <= 2.5 + 2.5 + 0.5
+
+
+def test_unconfirmed_torque_off_after_clear_propagates(clock):
+    """LA-06: if torque-off after the Goal write cannot be confirmed, that error is raised."""
+    bus, fake = make_bus(clock, {6: {**LATCHED, "sticky_overload": True}})
+    with pytest.raises(RuntimeError) as e:
+        bus._handshake()
+    msg = str(e.value)
+    assert "Torque-off not confirmed" in msg
+    assert_names_only(msg, "gripper")
+
+
+def test_interrupt_after_goal_write_still_turns_torque_off(clock):
+    """LA-07: Ctrl-C right after the Goal write (torque now on) still runs the verified torque-off."""
+    bus, fake = make_bus(clock, {6: dict(LATCHED)})
+    fired = []
+
+    def interrupt_once(op):
+        if op.reg == "Goal" and not fired:
+            fired.append(op)
+            raise KeyboardInterrupt
+
+    fake.on_write = interrupt_once
+    with pytest.raises(KeyboardInterrupt):
+        bus._handshake()
+    assert fired
+    assert fake.servos[6].te == 0
+    assert_confirmed(fake, 6)
+
+
+def test_absent_motor_is_untouched(clock):
+    """LA-08: a motor that never replies gets no writes and is still reported missing."""
+    bus, fake = make_bus(clock, {6: {"absent": True}})
+    with pytest.raises(RuntimeError, match=r"Missing motor IDs:\n  - 6"):
+        bus._handshake()
+    assert fake.ops("write") == []
+
+
+def test_two_latched_motors_both_cleared(clock, caplog):
+    """LA-10."""
+    bus, fake = make_bus(clock, {5: {**LATCHED, "present": 2000, "goal": 2100}, 6: dict(LATCHED)})
+    bus._handshake()
+    assert sorted((o.id, o.value) for o in fake.goal_writes()) == [(5, 2000), (6, 1491)]
+    for i in (5, 6):
+        assert not fake.servos[i].overload
+        assert fake.servos[i].te == 0
+        assert_confirmed(fake, i)
+    assert len(latch_warnings(caplog)) == 2
