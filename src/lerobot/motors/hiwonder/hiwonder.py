@@ -56,7 +56,7 @@ SIGN_BIT = 1 << 15  # sign-magnitude position registers: a raw value with bit 15
 
 # Overload latch on connect: hardware 2026-10-08, Goal_Position=Present cleared it within 2 s in 18 of 18 resets.
 OVERLOAD_CLEAR_TIMEOUT_S = 2.5
-OTHER_FAULT_BITS = hw.ERRBIT_VOLTAGE | hw.ERRBIT_SENSOR | hw.ERRBIT_OVERHEAT | hw.ERRBIT_CURRENT | hw.ERRBIT_ANGLE
+OTHER_FAULT_BITS = 0xFF & ~hw.ERRBIT_OVERLOAD  # any other bit, documented (voltage, sensor, ...) or not
 
 logger = logging.getLogger(__name__)
 

@@ -996,7 +996,7 @@ def test_healthy_handshake_writes_nothing(clock):
 
 
 @pytest.mark.parametrize(
-    "bit", [hw.ERRBIT_OVERHEAT, hw.ERRBIT_VOLTAGE, hw.ERRBIT_ANGLE, hw.ERRBIT_CURRENT, hw.ERRBIT_SENSOR]
+    "bit", [hw.ERRBIT_OVERHEAT, hw.ERRBIT_VOLTAGE, hw.ERRBIT_ANGLE, hw.ERRBIT_CURRENT, hw.ERRBIT_SENSOR, 0x40, 0x80]
 )
 def test_other_fault_bit_is_never_written(clock, bit):
     """LA-03: Overload plus any other fault bit gets no torque-on write; the error names the motor."""
