@@ -33,12 +33,15 @@ from examples.hiwonder.arm_tools import (  # noqa: E402
     JOINTS,
     MIN_TRAVEL,
     PASS,
+    SPOKEN,
+    STATUS_READ_ERROR,
     STILL_RANGE,
     TICKS_PER_DEG,
     calibration_offsets,
     clamp_goal,
     evaluate_grasp,
     evaluate_joint,
+    find_grasp,
     plan_self_move,
     probe_ok,
     ramp,
@@ -85,7 +88,7 @@ def summarize(results, speaker):
     if bad:
         speaker.say(
             "Check done. "
-            + ". ".join(f"{spoken_name(r['joint'])} {r['verdict'].lower()}" for r in bad)
+            + ". ".join(f"{SPOKEN.get(r['joint'], r['joint'])} {r['verdict'].lower()}" for r in bad)
             + ".",
             wait=True,
         )
@@ -184,7 +187,7 @@ def self_test_joint(bus, joint, calibration, log):
             reasons.append(f"stalled moving to {out_target if stalled else back}")
         elif abs(reached - out_target) > tol or abs(returned - back) > tol:
             reasons.append(f"missed target by {side['error_deg']} / {side['return_error_deg']} deg")
-        if status:
+        if status > 0:
             reasons.append(f"status flag {hex(status)}")
         done += 1
     if not done:
@@ -235,15 +238,12 @@ def check_self(args, out, speaker):
 # ---------- teleop ----------
 
 
-READ_ERROR = -1
-
-
 def read_status(bus, joint):
-    """Status register, or READ_ERROR: a motor flagging Overload can make the read itself raise."""
+    """Status register, or STATUS_READ_ERROR when the read raises (counted separately, not a fault)."""
     try:
         return bus.read("Status", joint, normalize=False)
-    except Exception:  # noqa: BLE001 - recorded as a fault, the step continues
-        return READ_ERROR
+    except Exception:  # noqa: BLE001 - recorded, the step continues
+        return STATUS_READ_ERROR
 
 
 def run_step(teleop, robot, joint, prompt, speaker, rows, done_when, fps=30):
@@ -295,13 +295,7 @@ def joint_done(joint):
 
 
 def grasp_done(trace):
-    lead = trace["leader"]
-    k = min(range(len(lead)), key=lead.__getitem__)
-    return (
-        max(lead[: k + 1]) - lead[k] >= 30
-        and max(lead[k:]) - lead[k] >= 30
-        and still_for(trace, STEP_STILL_S)
-    )
+    return find_grasp(trace["leader"]) is not None and still_for(trace, STEP_STILL_S)
 
 
 def check_teleop(args, out, speaker):

@@ -11,6 +11,7 @@ JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_ro
 TICKS_PER_DEG = 4095 / 360
 
 PASS, FAIL, INCOMPLETE = "PASS", "FAIL", "INCOMPLETE"
+STATUS_READ_ERROR = -1  # a Status read that raised (comm), recorded and counted, not a motor fault
 
 SPOKEN = {
     "shoulder_pan": "base rotation",
@@ -144,7 +145,8 @@ def evaluate_joint(joint, t, leader, follower, status):
     reasons = []
     if f_travel < FOLLOWER_TRAVEL_FRACTION * travel:
         reasons.append(f"follower moved {f_travel:.0f} of the leader's {travel:.0f} {unit(joint)}")
-    faults = sorted({s for s in status if s})
+    faults = sorted({s for s in status if s > 0})
+    metrics["status_read_errors"] = sum(s == STATUS_READ_ERROR for s in status)
     if faults:
         reasons.append(f"status flags {[hex(s) for s in faults]}")
     errors = _still_errors(t, leader, follower)
@@ -164,19 +166,39 @@ def evaluate_joint(joint, t, leader, follower, status):
     return {"joint": joint, "verdict": PASS, "reasons": [], "metrics": metrics}
 
 
+def find_grasp(leader, delta=30.0):
+    """Index of the lowest leader gripper reading that has an open (>= delta higher) both before and after it."""
+    pre, suf = [], []
+    for v in leader:
+        pre.append(max(v, pre[-1]) if pre else v)
+    for v in reversed(leader):
+        suf.append(max(v, suf[-1]) if suf else v)
+    suf.reverse()
+    found = [k for k, v in enumerate(leader) if pre[k] - v >= delta and suf[k] - v >= delta]
+    return min(found, key=leader.__getitem__) if found else None
+
+
 def evaluate_grasp(t, leader, follower, status):
     """Gripper closes on an object (follower blocked short of the leader) and must open again afterwards."""
-    k_min = min(range(len(leader)), key=leader.__getitem__)
-    closed = leader[k_min]
-    metrics = {"status_seen": sorted({s for s in status if s})}
-    if max(leader[: k_min + 1]) - closed < 30 or max(leader[k_min:]) - closed < 30:
+    k_min = find_grasp(leader)
+    metrics = {
+        "status_seen": sorted({s for s in status if s > 0}),
+        "status_read_errors": sum(s == STATUS_READ_ERROR for s in status),
+    }
+    if k_min is None:
         return {
             "joint": GRIPPER,
             "verdict": INCOMPLETE,
             "metrics": metrics,
             "reasons": ["leader gripper must close at least 30 percent, then open at least 30 percent"],
         }
-    held = [f - lead for lead, f in zip(leader, follower, strict=True) if lead - closed <= 2.0]
+    closed = leader[k_min]
+    lo = hi = k_min  # the contiguous closed stretch around the grasp
+    while lo > 0 and leader[lo - 1] - closed <= 2.0:
+        lo -= 1
+    while hi + 1 < len(leader) and leader[hi + 1] - closed <= 2.0:
+        hi += 1
+    held = [follower[i] - leader[i] for i in range(lo, hi + 1)]
     metrics["blocked_gap"] = round(max(held), 1)
     final_gap = abs(leader[-1] - follower[-1])
     metrics["final_gap"] = round(final_gap, 1)
@@ -205,7 +227,9 @@ def plan_self_move(joint, start, calibration, amp_deg):
         lo = max(lo, calibration["range_min"] + GRIPPER_CLOSED_MARGIN * span)
     amp = round(amp_deg * TICKS_PER_DEG)
     min_room = MIN_ROOM_DEG * TICKS_PER_DEG
-    start = clamp_goal(start, calibration)  # a joint can rest a few ticks past its range; the servo refuses that goal
+    start = clamp_goal(
+        start, calibration
+    )  # a joint can rest a few ticks past its range; the servo refuses that goal
     sides = []  # (room, out_target): a short side is near a range end, where the arm may touch itself or the base
     if hi - start >= min_room:
         sides.append((hi - start, start + min(amp, math.floor(hi - start))))

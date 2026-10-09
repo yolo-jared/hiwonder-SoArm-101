@@ -20,11 +20,13 @@ from examples.hiwonder.arm_tools import (
     GRIPPER,
     INCOMPLETE,
     PASS,
+    STATUS_READ_ERROR,
     MatchGuide,
     calibration_offsets,
     clamp_goal,
     evaluate_grasp,
     evaluate_joint,
+    find_grasp,
     plan_self_move,
     probe_ok,
     ramp,
@@ -175,6 +177,16 @@ def test_fault_status_fails():
     assert any("status" in s for s in r["reasons"])
 
 
+def test_unreadable_status_is_counted_not_failed():
+    # Live 2026-10-09: ~1 in 8 single Status reads during teleop raised (comm), with no motor fault.
+    t, lead, fol = trace(sweep())
+    status = [0] * len(t)
+    status[10] = status[40] = STATUS_READ_ERROR
+    r = evaluate_joint("shoulder_pan", t, lead, fol, status)
+    assert r["verdict"] == PASS, r
+    assert r["metrics"]["status_read_errors"] == 2
+
+
 def test_wrist_roll_needs_ninety_degrees_of_travel():
     t, lead, fol = trace(sweep(amp=60.0))
     assert evaluate_joint("wrist_roll", t, lead, fol, [0] * len(t))["verdict"] == INCOMPLETE
@@ -215,6 +227,23 @@ def test_grasp_fails_when_the_follower_stays_closed():
 def test_grasp_without_a_close_is_incomplete():
     t = [i * 0.1 for i in range(60)]
     assert evaluate_grasp(t, [80.0] * 60, [80.0] * 60, [0] * 60)["verdict"] == INCOMPLETE
+
+
+def test_grasp_that_starts_closed_is_found_after_the_first_open():
+    # Live 2026-10-09: leader started closed (6), opened (59), closed on the object (follower held at 20.5),
+    # opened (94), then rested at 33. The global minimum was the start, which hid the grasp.
+    lead = [6.0] * 10 + [59.0] * 10 + [6.0] * 15 + [94.0] * 5 + [33.0] * 15
+    fol = [6.8] * 10 + [58.5] * 10 + [20.5] * 15 + [90.5] * 5 + [33.6] * 15
+    t = [i * 0.1 for i in range(len(lead))]
+    r = evaluate_grasp(t, lead, fol, [0] * len(lead))
+    assert r["verdict"] == PASS, r
+    assert r["metrics"]["blocked_gap"] == pytest.approx(14.5)
+
+
+def test_find_grasp_needs_open_close_open():
+    assert find_grasp([6.0] * 5 + [59.0] * 5 + [6.0] * 5 + [94.0] * 5) == 10
+    assert find_grasp([6.0] * 5 + [59.0] * 5) is None
+    assert find_grasp([80.0] * 5 + [5.0] * 5) is None
 
 
 # ---------- self-test planner ----------
