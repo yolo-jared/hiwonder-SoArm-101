@@ -410,3 +410,22 @@ def test_record_ranges_of_motion(mock_motors, dummy_motors):
     assert mock_motors.stubs[stub].calls == 3
     assert mins == expected_mins
     assert maxes == expected_maxes
+
+
+# Retry and unconfirmed-motor reporting for disable_torque() are covered in test_hiwonder_torque_off.py
+# (test_ignored_first_torque_off_is_retried_and_confirmed, test_unconfirmed_torque_off_after_clear_propagates).
+
+
+def test_disconnect_closes_port_if_torque_verification_fails(dummy_motors):
+    bus = HiwonderMotorsBus(port="/dev/dummy-port", motors=dummy_motors)
+    bus.port_handler.is_open = True
+
+    with (
+        patch.object(bus.port_handler, "clearPort"),
+        patch.object(bus.port_handler, "closePort") as close_port,
+        patch.object(bus, "disable_torque", side_effect=RuntimeError("torque still enabled")),
+        pytest.raises(RuntimeError, match="torque still enabled"),
+    ):
+        bus.disconnect()
+
+    close_port.assert_called_once()
