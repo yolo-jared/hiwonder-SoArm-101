@@ -1,0 +1,13 @@
+# Raw run data stays local (main checkout test-output/), never pushed: it can show the room, people or home paths.
+*.jsonl
+*.jpg
+*.jpeg
+*.png
+*.mp4
+*.mov
+*-summary.json
+probe-*.json
+trials.json
+cams.json
+SHA256SUMS
+results/

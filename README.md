@@ -151,22 +151,54 @@ uv run --no-sync lerobot-calibrate \
 
 If an existing calibration-file prompt appears, press Enter only to reuse a calibration you trust; type `c` and Enter to recalibrate. During calibration, move the prompted joints gently through their usable ranges. Wrist roll is excluded from the range sweep by the code; it receives a homing offset and a preset full encoder range. Do not force any joint past physical or cable limits. A `Calibration saved` line confirms the file was written, not that paired-arm motion has been checked.
 
-Before the first **camera-free** teleoperation test, secure the follower base, clear its entire motion area, verify which port belongs to each arm, and place leader and follower in similar poses (including wrist and gripper). The follower can move as soon as the command connects. Start with small leader movements, keep clear of the follower, and press Ctrl+C immediately for unexpected motion:
+Before teleoperation:
+
+1. Secure the follower base and clear its motion area.
+2. Verify which port belongs to each arm.
+3. Keep the leader gripper partly open. Holding it fully closed stalls the follower gripper.
+
+#### Check the arms (new arm or after recalibration)
+
+Run the three modes in order. Each prints PASS, FAIL or INCOMPLETE per joint and saves results to `outputs/arm_check/`.
+
+```bash
+ARGS="--leader-port=/dev/cu.usbmodemLEADER --leader-id=my_leader --follower-port=/dev/cu.usbmodemFOLLOWER --follower-id=my_follower"
+PYTHONPATH=src uv run --no-sync python examples/hiwonder/arm_check.py calibration $ARGS  # no motion
+PYTHONPATH=src uv run --no-sync python examples/hiwonder/arm_check.py self $ARGS         # follower moves on its own; hands clear
+PYTHONPATH=src uv run --no-sync python examples/hiwonder/arm_check.py teleop $ARGS       # spoken steps; have a soft object ready
+```
+
+- `calibration`: FAIL means leader and follower calibrations differ by more than 5 degrees on a joint. Recalibrate both arms.
+- `self`: each follower joint moves 15 degrees out and back; the gripper only opens.
+- `teleop`: match the arms, then move each leader joint far both ways and hold still when asked. Ends with a gripper grasp on a soft object laid in the follower's open jaws.
+
+#### Teleoperate
+
+Guided start (recommended): nothing moves until the leader matches the follower. Spoken cues name one joint at a time ("Elbow: 12 degrees off", "closer", "wrong way, go back"). Trust the numbers over your eye.
+
+```bash
+PYTHONPATH=src uv run --no-sync python examples/hiwonder/hiwonder_teleop.py $ARGS
+```
+
+Stock command: pose the leader to match the follower joint by joint first. On connect, the follower moves at full speed to the leader's pose.
 
 ```bash
 uv run --no-sync lerobot-teleoperate \
   --robot.type=so101_follower \
   --robot.port=/dev/cu.usbmodemFOLLOWER \
   --robot.id=my_follower \
-  --robot.max_relative_target=2.0 \
   --teleop.type=so101_leader \
   --teleop.port=/dev/cu.usbmodemLEADER \
   --teleop.id=my_leader \
-  --fps=10 \
+  --fps=30 \
   --teleop_time_s=10
 ```
 
-The 10-second duration and per-command position-change cap make this a short first check; they do **not** guarantee a safe motion speed or replace the physical checks. If direction, starting pose, or movement size is wrong, stop and inspect calibration before trying again. Add cameras only after camera-free teleoperation behaves correctly.
+- Press Ctrl+C to stop. Torque turns off on Ctrl+C or when the time limit ends.
+- Remove `--teleop_time_s=10` after the first run behaves correctly.
+- Do not add `--robot.max_relative_target=2.0`. It holds the follower far behind the leader on large moves.
+- If direction, starting pose, or movement size is wrong, stop and check calibration.
+- Add cameras only after camera-free teleoperation behaves correctly.
 
 ### Hands-free follower elbow diagnostic (macOS)
 

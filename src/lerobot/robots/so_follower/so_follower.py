@@ -16,17 +16,21 @@
 
 import logging
 import time
-from functools import cached_property
+from functools import cached_property, partial
 
 from lerobot.cameras.utils import make_cameras_from_configs
 from lerobot.motors import Motor, MotorCalibration, MotorNormMode
 from lerobot.motors.feetech import OperatingMode
 from lerobot.types import RobotAction, RobotObservation
 from lerobot.utils.decorators import check_if_already_connected, check_if_not_connected
+from lerobot.utils.errors import DeviceNotConnectedError
+from lerobot.utils.robot_utils import disconnect_all
 
 from ..robot import Robot
 from ..utils import ensure_safe_goal_position
 from .config_so_follower import SOFollowerRobotConfig
+
+HX30HM_P32_MOTORS = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll")
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +59,11 @@ class SOFollower(Robot):
         }
         if motor_model == "hx30hm":
             from lerobot.motors.hiwonder import HiwonderMotorsBus
+
             self.bus = HiwonderMotorsBus(port=self.config.port, motors=motors, calibration=self.calibration)
         else:
             from lerobot.motors.feetech import FeetechMotorsBus
+
             self.bus = FeetechMotorsBus(port=self.config.port, motors=motors, calibration=self.calibration)
         self.cameras = make_cameras_from_configs(config.cameras)
 
@@ -88,20 +94,38 @@ class SOFollower(Robot):
         """
         We assume that at connection time, arm is in a rest position,
         and torque can be safely disabled to run calibration.
+
+        If a step fails, what was opened is closed before the error is re-raised.
         """
+        try:
+            self.bus.connect()
+        except BaseException:
+            # A failed handshake can leave the port open. Close it without torque-off: the handshake may have
+            # refused on purpose to write to a motor with a fault, and torque-off can write Goal_Position.
+            if self.bus.is_connected:
+                self._cleanup_failed_connect(partial(self.bus.disconnect, False))
+            raise
+        try:
+            if not self.is_calibrated and calibrate:
+                logger.info(
+                    "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
+                )
+                self.calibrate()
 
-        self.bus.connect()
-        if not self.is_calibrated and calibrate:
-            logger.info(
-                "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
-            )
-            self.calibrate()
+            for cam in self.cameras.values():
+                cam.connect()
 
-        for cam in self.cameras.values():
-            cam.connect()
-
-        self.configure()
+            self.configure()
+        except BaseException:
+            self._cleanup_failed_connect(self.disconnect)  # bus (torque off), then any open camera
+            raise
         logger.info(f"{self} connected.")
+
+    def _cleanup_failed_connect(self, cleanup) -> None:
+        try:
+            cleanup()
+        except BaseException as e:  # noqa: BLE001 - the connect error is the one re-raised
+            logger.error(f"{self}: cleanup after the failed connect also failed: {e!r}")
 
     @property
     def is_calibrated(self) -> bool:
@@ -152,12 +176,15 @@ class SOFollower(Robot):
         print("Calibration saved to", self.calibration_fpath)
 
     def configure(self) -> None:
+        hx30hm = getattr(self.config, "motor_model", "sts3215") == "hx30hm"
         with self.bus.torque_disabled():
             self.bus.configure_motors()
             for motor in self.bus.motors:
                 self.bus.write("Operating_Mode", motor, OperatingMode.POSITION.value)
-                # Set P_Coefficient to lower value to avoid shakiness (Default is 32)
-                self.bus.write("P_Coefficient", motor, 16)
+                # Set P_Coefficient to lower value to avoid shakiness (Default is 32).
+                # HX-30HM arm joints keep 32: P16 holds a 45 deg elbow lift 55 ticks short, P32 27 ticks.
+                p = 32 if hx30hm and motor in HX30HM_P32_MOTORS else 16
+                self.bus.write("P_Coefficient", motor, p)
                 # Set I_Coefficient and D_Coefficient to default value 0 and 32
                 self.bus.write("I_Coefficient", motor, 0)
                 self.bus.write("D_Coefficient", motor, 32)
@@ -219,11 +246,20 @@ class SOFollower(Robot):
         self.bus.sync_write("Goal_Position", goal_pos)
         return {f"{motor}.pos": val for motor, val in goal_pos.items()}
 
-    @check_if_not_connected
     def disconnect(self):
-        self.bus.disconnect(self.config.disable_torque_on_disconnect)
-        for cam in self.cameras.values():
-            cam.disconnect()
+        """Disconnect whatever is still open: the motor bus first (torque off), then each open camera.
+
+        Not gated on `is_connected`, which turns False as soon as one camera drops while the bus (and the arm's
+        torque) may still be on. Every part is attempted even if an earlier one raises; the first error is
+        re-raised after the rest. Raises DeviceNotConnectedError only when nothing was open.
+        """
+        steps = []
+        if self.bus.is_connected:
+            steps.append(partial(self.bus.disconnect, self.config.disable_torque_on_disconnect))
+        steps += [cam.disconnect for cam in self.cameras.values() if cam.is_connected]
+        if not steps:
+            raise DeviceNotConnectedError(f"{self} is not connected.")
+        disconnect_all(*steps)
 
         logger.info(f"{self} disconnected.")
 

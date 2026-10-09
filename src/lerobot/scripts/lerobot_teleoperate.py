@@ -101,7 +101,7 @@ from lerobot.teleoperators import (  # noqa: F401
     unitree_g1,
 )
 from lerobot.utils.import_utils import register_third_party_plugins
-from lerobot.utils.robot_utils import precise_sleep
+from lerobot.utils.robot_utils import disconnect_all, exit_on_termination_signals, precise_sleep
 from lerobot.utils.utils import init_logging, move_cursor_up
 from lerobot.utils.visualization_utils import init_rerun, log_rerun_data
 
@@ -221,28 +221,37 @@ def teleoperate(cfg: TeleoperateConfig):
     robot = make_robot_from_config(cfg.robot)
     teleop_action_processor, robot_action_processor, robot_observation_processor = make_default_processors()
 
-    teleop.connect()
-    robot.connect()
-
-    try:
-        teleop_loop(
-            teleop=teleop,
-            robot=robot,
-            fps=cfg.fps,
-            display_data=cfg.display_data,
-            duration=cfg.teleop_time_s,
-            teleop_action_processor=teleop_action_processor,
-            robot_action_processor=robot_action_processor,
-            robot_observation_processor=robot_observation_processor,
-            display_compressed_images=display_compressed_images,
-        )
-    except KeyboardInterrupt:
-        pass
-    finally:
-        if cfg.display_data:
-            rr.rerun_shutdown()
-        teleop.disconnect()
-        robot.disconnect()
+    robot_connected = teleop_connected = False
+    # SIGTERM/SIGHUP (kill, closing the terminal) raise SystemExit so the `finally` below turns torque off.
+    with exit_on_termination_signals() as signals:
+        try:
+            teleop.connect()
+            teleop_connected = True
+            robot.connect()
+            robot_connected = True
+            teleop_loop(
+                teleop=teleop,
+                robot=robot,
+                fps=cfg.fps,
+                display_data=cfg.display_data,
+                duration=cfg.teleop_time_s,
+                teleop_action_processor=teleop_action_processor,
+                robot_action_processor=robot_action_processor,
+                robot_observation_processor=robot_observation_processor,
+                display_compressed_images=display_compressed_images,
+            )
+        except KeyboardInterrupt:
+            pass
+        finally:
+            signals.hold()  # a SIGTERM/SIGHUP from here on takes effect once the arms are off
+            # Follower first: if the leader's adapter hangs, the follower is already off. Only devices whose
+            # connect() completed; a follower whose connect() raised cleans up after itself.
+            disconnect_all(
+                robot.disconnect if robot_connected else None,
+                teleop.disconnect if teleop_connected else None,
+                signals.release,
+                rr.rerun_shutdown if cfg.display_data else None,
+            )
 
 
 def main():

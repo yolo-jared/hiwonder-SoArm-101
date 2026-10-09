@@ -274,6 +274,10 @@ class PacketHandler:
         txpacket[PKT_PARAMETER0] = address
         txpacket[PKT_PARAMETER0 + 1] = length
         rxpacket, result, error = self.txRxPacket(txpacket)
+        # A reply to a read carries `length` data bytes, so LEN = length + 2 (error + data + checksum).
+        # Anything else is a stale reply (e.g. a late write ack) for the same ID, not this read's data.
+        if result == COMM_SUCCESS and rxpacket[PKT_LENGTH] != length + 2:
+            result = COMM_RX_CORRUPT
         if result == COMM_SUCCESS:
             error = rxpacket[PKT_ERROR]
             data.extend(rxpacket[PKT_PARAMETER0 : PKT_PARAMETER0 + length])

@@ -5,6 +5,10 @@ Push only to Jared's fork, never Hiwonder-official:
 
 This is Hiwonder's LeRobot fork for SO-ARM101 hardware. Read the macOS `uv` setup and safety procedure in `README.md` before giving calibration or teleoperation commands. Keep this environment separate from other robotics repositories.
 
+Operating, testing or debugging the Hiwonder SO-ARM101 hardware (HX-30HM servos, `src/lerobot/motors/hiwonder/`,
+`so_follower`/`so_leader` teleop): read `audit/LESSONS.md` first. It records the verified elbow-undertravel cause,
+hardware-safe test scripts and the mistakes that cost time.
+
 ## Commands and hardware boundaries
 
 - Use the installed entry points via `uv run --no-sync lerobot-calibrate` and `uv run --no-sync lerobot-teleoperate` after `uv sync --extra hiwonder`. Do not copy the manual's Windows `COM` ports or `python -m lerobot.teleoperate` command into macOS instructions; that module is absent from this checkout.
