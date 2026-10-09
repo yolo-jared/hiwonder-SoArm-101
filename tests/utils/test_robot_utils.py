@@ -173,3 +173,13 @@ def test_off_main_thread_is_a_no_op(sentinel_signals):
     t.join()
     assert errors == []
     assert signal.getsignal(signal.SIGTERM) is sentinel_signals
+
+
+def test_restore_ends_signal_handling_early(sentinel_signals):
+    """record() restores the previous handlers once the arms are off: a later `kill` during a long video encode
+    or upload is then not ignored."""
+    with exit_on_termination_signals() as restore:
+        restore()
+        assert signal.getsignal(signal.SIGTERM) is sentinel_signals
+        restore()  # idempotent
+    assert signal.getsignal(signal.SIGTERM) is sentinel_signals

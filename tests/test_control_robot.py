@@ -500,3 +500,23 @@ def test_teleoperate_leader_connect_failure_disconnects_nothing(monkeypatch):
 
     monkeypatch.setattr(MockTeleop, "connect", connect)
     assert _order_when_raised(order, ConnectionError, "leader port busy") == []
+
+
+def test_record_stops_ignoring_signals_once_arms_are_off(tmp_path, monkeypatch, sentinel_signals):
+    """Repeat signals are ignored only while the arms disconnect; during video encoding the caller's handler
+    (here the sentinel, normally the default action) is back."""
+    order = []
+    _patch_disconnects(monkeypatch, order)
+    _instrument_record(monkeypatch, order)
+    handler_during_finalize = []
+    real_finalize = LeRobotDataset.finalize
+
+    def finalize(self):
+        handler_during_finalize.append(signal.getsignal(signal.SIGTERM))
+        return real_finalize(self)
+
+    monkeypatch.setattr(LeRobotDataset, "finalize", finalize)
+    monkeypatch.setattr(lerobot_record, "record_loop", _signal_in_loop(signal.SIGTERM))
+    with pytest.raises(SystemExit):
+        record(_record_cfg(tmp_path))
+    assert handler_during_finalize[0] is sentinel_signals
