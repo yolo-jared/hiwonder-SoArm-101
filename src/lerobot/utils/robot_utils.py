@@ -52,46 +52,68 @@ def disconnect_all(*steps: Callable[[], object] | None) -> None:
         raise first
 
 
+class TerminationSignals:
+    """SIGTERM/SIGHUP handling for `exit_on_termination_signals`; empty `signals` makes every method a no-op."""
+
+    def __init__(self, signals: list[signal.Signals]):
+        self._previous = {sig: signal.getsignal(sig) for sig in signals}
+        self._held = False
+        self._received: int | None = None
+        self._raised = False
+        for sig in signals:
+            signal.signal(sig, self._handle)
+
+    def _handle(self, signum, frame):
+        name = signal.Signals(signum).name
+        if self._received is not None:
+            logger.warning(f"Received {name} again; ignored until the motors are off.")
+            return
+        self._received = signum
+        if self._held:
+            logger.warning(f"Received {name} while turning the motors off; exiting once they are off.")
+            return
+        self._held = self._raised = True
+        logger.warning(f"Received {name}; shutting down.")
+        raise SystemExit(128 + signum)
+
+    def hold(self) -> None:
+        """Call where the shutdown starts: until `release`, a signal is recorded instead of raised."""
+        self._held = True
+
+    def release(self) -> None:
+        """Restore the previous handlers; then raise SystemExit for a signal held and not yet raised."""
+        while self._previous:
+            sig, handler = self._previous.popitem()
+            if handler is not None:  # None: set outside Python, cannot be restored from here
+                signal.signal(sig, handler)
+        if self._received is not None and not self._raised:
+            self._raised = True
+            raise SystemExit(128 + self._received)
+
+
 @contextmanager
-def exit_on_termination_signals() -> Iterator[Callable[[], None]]:
+def exit_on_termination_signals() -> Iterator[TerminationSignals]:
     """Turn SIGTERM and SIGHUP into SystemExit(128 + signal) so the caller's `finally` (motor torque off) runs.
 
     By default these signals (`kill`, an IDE stop button, closing the terminal) end Python without running
-    `finally`, leaving motors powered. After the first one, further SIGTERM/SIGHUP are logged and ignored until
-    the block exits: closing a terminal can send both, and a second SystemExit would end a shutdown step midway
-    (the verified torque-off writes Goal_Position, which turns torque on, before Torque_Enable=0). Ctrl+C and
-    SIGKILL are unchanged. Yields `restore`, which puts the previous handlers back early (once the motors are
-    off, a later signal need not wait for slow steps such as video encoding); it also runs on exit. Does nothing
-    off the main thread, where Python cannot set signal handlers.
+    `finally`, leaving motors powered. A signal must not end a torque-off midway: the verified torque-off writes
+    Goal_Position, which turns torque on, before Torque_Enable=0. So after the first signal, repeats are logged
+    and ignored, and a signal arriving after `hold()` (call it where the shutdown starts) is raised only by
+    `release()` (call it once the motors are off; also run on exit). Releasing early lets a later signal end slow
+    steps such as video encoding. Ctrl+C and SIGKILL are unchanged. Does nothing off the main thread, where
+    Python cannot set signal handlers.
     """
-    if threading.current_thread() is not threading.main_thread():
+    if threading.current_thread() is threading.main_thread():
+        signals = TerminationSignals(
+            [signal.SIGTERM] + ([signal.SIGHUP] if hasattr(signal, "SIGHUP") else [])
+        )
+    else:
         logger.debug("Not on the main thread; SIGTERM/SIGHUP handlers left unchanged.")
-        yield lambda: None
-        return
-    signals = [signal.SIGTERM] + ([signal.SIGHUP] if hasattr(signal, "SIGHUP") else [])
-    previous = {sig: signal.getsignal(sig) for sig in signals}
-
-    def ignore(signum, frame):
-        logger.warning(f"Received {signal.Signals(signum).name} again; ignored until shutdown finishes.")
-
-    def exit_(signum, frame):
-        for sig in signals:
-            signal.signal(sig, ignore)
-        logger.warning(f"Received {signal.Signals(signum).name}; shutting down.")
-        raise SystemExit(128 + signum)
-
-    def restore():
-        while previous:
-            sig, handler = previous.popitem()
-            if handler is not None:  # None: set outside Python, cannot be restored from here
-                signal.signal(sig, handler)
-
-    for sig in signals:
-        signal.signal(sig, exit_)
+        signals = TerminationSignals([])
     try:
-        yield restore
+        yield signals
     finally:
-        restore()
+        signals.release()
 
 
 def precise_sleep(seconds: float, spin_threshold: float = 0.010, sleep_margin: float = 0.005):

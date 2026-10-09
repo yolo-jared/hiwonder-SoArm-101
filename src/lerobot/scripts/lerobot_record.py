@@ -527,6 +527,7 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
         if arms_off:
             return
         arms_off = True
+        signals.hold()  # a SIGTERM/SIGHUP from here on takes effect once the arms are off
         try:
             disconnect_all(
                 robot.disconnect if robot_connected else None,
@@ -534,15 +535,15 @@ def record(cfg: RecordConfig) -> LeRobotDataset:
             )
         except BaseException as e:  # noqa: BLE001 - re-raised by raise_arm_error after the dataset is saved
             arm_error = e
-        # Arms done: a further SIGTERM/SIGHUP may end the slow steps that follow (video encoding, upload).
-        restore_signals()
+        # Arms done: raise a held signal now, and let a later one end the slow steps (video encoding, upload).
+        signals.release()
 
     def raise_arm_error():
         if arm_error is not None:
             raise arm_error
 
     # SIGTERM/SIGHUP (kill, closing the terminal) raise SystemExit so the `finally` below turns torque off.
-    with exit_on_termination_signals() as restore_signals:
+    with exit_on_termination_signals() as signals:
         try:
             if cfg.resume:
                 num_cameras = len(robot.cameras) if hasattr(robot, "cameras") else 0

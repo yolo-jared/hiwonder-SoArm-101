@@ -223,7 +223,7 @@ def teleoperate(cfg: TeleoperateConfig):
 
     robot_connected = teleop_connected = False
     # SIGTERM/SIGHUP (kill, closing the terminal) raise SystemExit so the `finally` below turns torque off.
-    with exit_on_termination_signals():
+    with exit_on_termination_signals() as signals:
         try:
             teleop.connect()
             teleop_connected = True
@@ -243,11 +243,13 @@ def teleoperate(cfg: TeleoperateConfig):
         except KeyboardInterrupt:
             pass
         finally:
+            signals.hold()  # a SIGTERM/SIGHUP from here on takes effect once the arms are off
             # Follower first: if the leader's adapter hangs, the follower is already off. Only devices whose
             # connect() completed; a follower whose connect() raised cleans up after itself.
             disconnect_all(
                 robot.disconnect if robot_connected else None,
                 teleop.disconnect if teleop_connected else None,
+                signals.release,
                 rr.rerun_shutdown if cfg.display_data else None,
             )
 
