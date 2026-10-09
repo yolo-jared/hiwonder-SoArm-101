@@ -98,6 +98,16 @@ people or home-folder paths.
     torque-off bound holds only while the adapter accepts and drains writes (spec R6). Recovery: unplug the USB cable
     or cut the 12 V servo supply, then re-check Torque_Enable read-only before hands go near the arm.
 
+15. Shutdown paths that turn torque off (2026-10-09, unit-tested only, no hardware run yet):
+    | How LeRobot stops | Arms off? |
+    |---|---|
+    | Ctrl+C (teleoperate, record) | yes, follower first |
+    | `kill` / IDE stop (SIGTERM), closing the terminal (SIGHUP) | yes: `exit_on_termination_signals()` raises SystemExit, exit 143 / 129; a repeat signal is ignored until the arms are off |
+    | Ctrl+C mid-episode in record | yes, before video encoding (previously torque stayed on for the whole encode) |
+    | Follower connect fails partway (calibration, camera, configure) | yes, `SOFollower.connect()` disconnects what it opened |
+    | Bus handshake fails (latched fault besides Overload) | port closed, no torque-off write (it could write Goal to the faulted motor) |
+    | `kill -9` (SIGKILL), power loss, frozen USB adapter | NO: cut 12 V or unplug USB, then check Torque_Enable read-only |
+
 ## Open
 
 - Teleop with the leader gripper held fully closed puts the follower gripper in overload. MEASURED 2026-10-08: the
