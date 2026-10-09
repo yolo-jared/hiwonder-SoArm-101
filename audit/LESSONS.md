@@ -142,3 +142,7 @@ people or home-folder paths.
   follower read shoulder_lift ~10 deg and wrist_flex ~5 deg away from the checked pose, and both snapped back within
   0.3 s of the first send (cause unverified). Re-check the match immediately before the first send.
   Removing the cap means the first send moves the follower at full speed to the leader's pose; gate it on a match.
+  Rerun at fps 30 (loop held 33.4 ms), match re-checked right after a short "Go" cue: no start jump. Operator: "felt
+  smoother". Follower stalled in 22% of the elbow's moving steps vs 34% at fps 10; elbow peak lag 3.8 deg (faster lifts
+  than the fps-10 run), hold error 0.44 deg, no jitter while still. In both runs the leader's shoulder_lift moved < 1 deg
+  although the cue asked for a shoulder lift, so shoulder lag without the cap is still unmeasured.
