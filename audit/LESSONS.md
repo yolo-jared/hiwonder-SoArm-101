@@ -133,4 +133,12 @@ people or home-folder paths.
 - The main checkout `.venv` editable install points at the MAIN checkout `src/`, not this branch: run with
   `PYTHONPATH=<worktree>/src` (verify `lerobot.__file__`) or the P32 change is not in effect.
 - `follower_sweep.py --set-p N --set-p-joints a,b` writes P (addr 21) only on named joints, torque off, and restores 16 after.
-- Teleop without the 2 deg cap not yet run.
+- Teleop without the 2 deg cap, run once 2026-10-09 (n=1, P32, fps 10, 90 s, leader moved the elbow only, 26 deg x2;
+  shoulder_lift barely moved). Elbow lag peak 2.9 deg in motion, hold error 0.4 deg at rest and ~1.2 deg held raised, no
+  jitter while still (follower p2p 0.26 deg). With the cap (kill-test logs, same fps) the clamp warnings show the leader
+  up to 55 deg (elbow) / 63 deg (shoulder) ahead. The operator called the elbow "very jerky": the log shows 10 Hz
+  stair steps (~2 deg per 0.1 s goal jump) and a ~0.3 s stiction delay before each move starts; try fps 30 next.
+  Harness caveat: the start guard spoke a ~10 s cue between its match check and the first send; in that gap the
+  follower read shoulder_lift ~10 deg and wrist_flex ~5 deg away from the checked pose, and both snapped back within
+  0.3 s of the first send (cause unverified). Re-check the match immediately before the first send.
+  Removing the cap means the first send moves the follower at full speed to the leader's pose; gate it on a match.
