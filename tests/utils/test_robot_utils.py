@@ -175,11 +175,49 @@ def test_off_main_thread_is_a_no_op(sentinel_signals):
     assert signal.getsignal(signal.SIGTERM) is sentinel_signals
 
 
-def test_restore_ends_signal_handling_early(sentinel_signals):
-    """record() restores the previous handlers once the arms are off: a later `kill` during a long video encode
-    or upload is then not ignored."""
-    with exit_on_termination_signals() as restore:
-        restore()
+def test_release_ends_signal_handling_early(sentinel_signals):
+    """record() releases once the arms are off: a later `kill` during a long video encode or upload is then
+    not ignored."""
+    with exit_on_termination_signals() as signals:
+        signals.release()
         assert signal.getsignal(signal.SIGTERM) is sentinel_signals
-        restore()  # idempotent
+        signals.release()  # idempotent
     assert signal.getsignal(signal.SIGTERM) is sentinel_signals
+
+
+def test_signal_while_held_is_raised_on_release(sentinel_signals):
+    """A first signal that arrives during shutdown (Ctrl+C, then the terminal is closed) waits until the arms are
+    off instead of ending the torque-off midway."""
+    log = []
+    with exit_on_termination_signals() as signals:
+        signals.hold()
+        send(signal.SIGTERM)
+        log.append("torque_enable=0")
+        with pytest.raises(SystemExit) as e:
+            signals.release()
+        assert e.value.code == 128 + signal.SIGTERM
+        assert signal.getsignal(signal.SIGTERM) is sentinel_signals
+    assert log == ["torque_enable=0"]
+
+
+def test_signal_while_held_is_raised_at_block_exit(sentinel_signals):
+    with pytest.raises(SystemExit) as e, exit_on_termination_signals() as signals:
+        signals.hold()
+        send(signal.SIGTERM)
+    assert e.value.code == 128 + signal.SIGTERM
+
+
+def test_release_without_signal_returns(sentinel_signals):
+    with exit_on_termination_signals() as signals:
+        signals.hold()
+        signals.release()
+    assert signal.getsignal(signal.SIGTERM) is sentinel_signals
+
+
+def test_signal_already_raised_is_not_raised_again_on_release(sentinel_signals):
+    with pytest.raises(SystemExit), exit_on_termination_signals() as signals:
+        try:
+            send(signal.SIGTERM)
+        finally:
+            signals.hold()
+            signals.release()  # must not raise a second SystemExit over the first

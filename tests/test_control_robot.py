@@ -520,3 +520,94 @@ def test_record_stops_ignoring_signals_once_arms_are_off(tmp_path, monkeypatch, 
     with pytest.raises(SystemExit):
         record(_record_cfg(tmp_path))
     assert handler_during_finalize[0] is sentinel_signals
+
+
+def test_teleoperate_first_signal_during_robot_disconnect_waits_for_it(monkeypatch, sentinel_signals):
+    """Ctrl+C, then the terminal is closed while the follower turns off: the SIGHUP/SIGTERM takes effect after."""
+    order = []
+
+    def robot_disconnect(self):
+        order.append("robot:start")
+        _send(signal.SIGTERM)
+        order.append("robot:end")
+        self._is_connected = False
+
+    monkeypatch.setattr(MockRobot, "disconnect", robot_disconnect)
+    monkeypatch.setattr(MockTeleop, "disconnect", _recording_disconnect(order, "teleop"))
+    with pytest.raises(SystemExit) as e:
+        teleoperate(_teleop_cfg())
+    assert e.value.code == 128 + signal.SIGTERM
+    assert order == ["robot:start", "robot:end", "teleop"]
+
+
+def test_record_first_signal_during_arm_disconnect_waits_for_it(tmp_path, monkeypatch, sentinel_signals):
+    order = []
+
+    def robot_disconnect(self):
+        order.append("robot:start")
+        _send(signal.SIGTERM)
+        order.append("robot:end")
+        self._is_connected = False
+
+    monkeypatch.setattr(MockRobot, "disconnect", robot_disconnect)
+    monkeypatch.setattr(MockTeleop, "disconnect", _recording_disconnect(order, "teleop"))
+    _instrument_record(monkeypatch, order)
+    with pytest.raises(SystemExit) as e:
+        record(_record_cfg(tmp_path))
+    assert e.value.code == 128 + signal.SIGTERM
+    assert order.index("robot:start") < order.index("robot:end") < order.index("teleop")
+
+
+def _recorded_replay_cfg(tmp_path):
+    record(_record_cfg(tmp_path))
+    return ReplayConfig(
+        robot=MockRobotConfig(),
+        dataset=DatasetReplayConfig(repo_id=DUMMY_REPO_ID, episode=0, root=tmp_path / "record"),
+        play_sounds=False,
+    )
+
+
+@pytest.fixture
+def no_hub():
+    with (
+        patch("lerobot.datasets.dataset_metadata.get_safe_version", return_value="v3.0"),
+        patch("lerobot.datasets.dataset_metadata.snapshot_download"),
+    ):
+        yield
+
+
+def test_replay_termination_signal_disconnects_robot(tmp_path, monkeypatch, sentinel_signals, no_hub):
+    cfg = _recorded_replay_cfg(tmp_path)
+    order = []
+    _patch_disconnects(monkeypatch, order)
+    real_send_action = MockRobot.send_action
+
+    def send_action(self, action):
+        _send(signal.SIGTERM)
+        return real_send_action(self, action)
+
+    monkeypatch.setattr(MockRobot, "send_action", send_action)
+    with pytest.raises(SystemExit) as e:
+        replay(cfg)
+    assert e.value.code == 128 + signal.SIGTERM
+    assert order == ["robot"]
+    assert signal.getsignal(signal.SIGTERM) is sentinel_signals
+
+
+def test_replay_first_signal_during_robot_disconnect_waits_for_it(
+    tmp_path, monkeypatch, sentinel_signals, no_hub
+):
+    cfg = _recorded_replay_cfg(tmp_path)
+    order = []
+
+    def robot_disconnect(self):
+        order.append("robot:start")
+        _send(signal.SIGTERM)
+        order.append("robot:end")
+        self._is_connected = False
+
+    monkeypatch.setattr(MockRobot, "disconnect", robot_disconnect)
+    with pytest.raises(SystemExit) as e:
+        replay(cfg)
+    assert e.value.code == 128 + signal.SIGTERM
+    assert order == ["robot:start", "robot:end"]
