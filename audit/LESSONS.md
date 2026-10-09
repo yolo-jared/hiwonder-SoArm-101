@@ -102,11 +102,14 @@ people or home-folder paths.
     | How LeRobot stops | Arms off? |
     |---|---|
     | Ctrl+C (teleoperate, record) | yes, follower first |
-    | `kill` / IDE stop (SIGTERM), closing the terminal (SIGHUP) | yes: `exit_on_termination_signals()` raises SystemExit, exit 143 / 129; a repeat signal is ignored until the arms are off |
+    | `kill` / IDE stop (SIGTERM), closing the terminal (SIGHUP), in teleoperate, record, replay | yes: `exit_on_termination_signals()` raises SystemExit, exit 143 / 129 |
+    | A SIGTERM/SIGHUP while the arms are turning off (e.g. Ctrl+C, then the terminal is closed) | yes: held, raised once the arms are off; repeats ignored until then |
     | Ctrl+C mid-episode in record | yes, before video encoding (previously torque stayed on for the whole encode) |
     | Follower connect fails partway (calibration, camera, configure) | yes, `SOFollower.connect()` disconnects what it opened |
     | Bus handshake fails (latched fault besides Overload) | port closed, no torque-off write (it could write Goal to the faulted motor) |
-    | `kill -9` (SIGKILL), power loss, frozen USB adapter | NO: cut 12 V or unplug USB, then check Torque_Enable read-only |
+    | `lerobot-find-joint-limits` stopped by a signal; `kill -9` (SIGKILL); power loss | NO: cut 12 V or unplug USB, then check Torque_Enable read-only |
+    | Frozen USB adapter during shutdown (item 14) | NO, and a second `kill` is now ignored there: use Ctrl+C, `kill -9`, or unplug USB / cut 12 V |
+    | A second Ctrl+C during shutdown | ends the step in progress (`disconnect_all`, FA-13), which can be a torque-off midway |
 
 ## Open
 
