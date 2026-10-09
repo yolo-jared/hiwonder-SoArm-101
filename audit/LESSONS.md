@@ -101,9 +101,9 @@ people or home-folder paths.
 15. Shutdown paths that turn torque off (2026-10-09; unit-tested, then live on lerobot-teleoperate as below):
     Live 2026-10-09 (leader + follower, P32 in effect, `max_relative_target=2.0`, fps 10; after each stop a 75 s
     read-only watch of all six follower motors: every sample Torque_Enable 0, Status 0): SIGTERM holding (exit 143,
-    1.5 s), SIGHUP holding (129), SIGTERM while the leader moved (143), 120 s time limit (0), Ctrl+C (TE 0, but the
-    wrapper's `tee` also got the Ctrl+C, so the shutdown log was cut and Python exited 120 on the broken pipe; use
-    `tee -i`). An unrelated crash (a second program on the follower port) also ran the shutdown: elbow torque-off
+    1.5 s), SIGHUP holding (129), SIGTERM while the leader moved (143), 120 s time limit (0), Ctrl+C (0, both arms
+    logged disconnected). A first Ctrl+C run piped through plain `tee` lost its shutdown log and exited 120: Ctrl+C
+    also kills `tee`, and Python then fails to flush (torque still read 0); use `tee -i`. An unrelated crash (a second program on the follower port) also ran the shutdown: elbow torque-off
     confirmed in the log. One program per port: a watch sharing the port breaks both.
     | How LeRobot stops | Arms off? |
     |---|---|
