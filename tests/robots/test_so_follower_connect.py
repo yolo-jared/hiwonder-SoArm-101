@@ -37,7 +37,10 @@ def _bus_mock(connect_exc=None, port_open_after_failure=False, disconnect_exc=No
 
 
 def _robot(**bus_kwargs) -> SO101Follower:
-    with patch("lerobot.motors.hiwonder.HiwonderMotorsBus", side_effect=lambda *a, **kw: _bus_mock(**bus_kwargs, **kw)):
+    with patch(
+        "lerobot.motors.hiwonder.HiwonderMotorsBus",
+        side_effect=lambda *a, **kw: _bus_mock(**bus_kwargs, **kw),
+    ):
         return SO101Follower(SO101FollowerConfig(port="/dev/null", motor_model="hx30hm"))
 
 
@@ -70,7 +73,10 @@ def test_camera_failure_disconnects_bus():
     cam.is_connected = False
     cam.connect.side_effect = ConnectionError("camera busy")
     robot.cameras = {"front": cam}
-    with patch.object(SO101Follower, "configure") as configure, pytest.raises(ConnectionError, match="camera busy"):
+    with (
+        patch.object(SO101Follower, "configure") as configure,
+        pytest.raises(ConnectionError, match="camera busy"),
+    ):
         robot.connect()
     configure.assert_not_called()
     robot.bus.disconnect.assert_called_once()
@@ -102,7 +108,8 @@ def test_cleanup_error_does_not_hide_the_original(caplog):
     ):
         robot.connect()
     assert any(
-        r.levelno == logging.ERROR and "Torque-off not confirmed on gripper" in r.getMessage() for r in caplog.records
+        r.levelno == logging.ERROR and "Torque-off not confirmed on gripper" in r.getMessage()
+        for r in caplog.records
     )
 
 

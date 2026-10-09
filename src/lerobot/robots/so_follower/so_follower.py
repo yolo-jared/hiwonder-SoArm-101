@@ -94,20 +94,38 @@ class SOFollower(Robot):
         """
         We assume that at connection time, arm is in a rest position,
         and torque can be safely disabled to run calibration.
+
+        If a step fails, what was opened is closed before the error is re-raised.
         """
+        try:
+            self.bus.connect()
+        except BaseException:
+            # A failed handshake can leave the port open. Close it without torque-off: the handshake may have
+            # refused on purpose to write to a motor with a fault, and torque-off can write Goal_Position.
+            if self.bus.is_connected:
+                self._cleanup_failed_connect(partial(self.bus.disconnect, False))
+            raise
+        try:
+            if not self.is_calibrated and calibrate:
+                logger.info(
+                    "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
+                )
+                self.calibrate()
 
-        self.bus.connect()
-        if not self.is_calibrated and calibrate:
-            logger.info(
-                "Mismatch between calibration values in the motor and the calibration file or no calibration file found"
-            )
-            self.calibrate()
+            for cam in self.cameras.values():
+                cam.connect()
 
-        for cam in self.cameras.values():
-            cam.connect()
-
-        self.configure()
+            self.configure()
+        except BaseException:
+            self._cleanup_failed_connect(self.disconnect)  # bus (torque off), then any open camera
+            raise
         logger.info(f"{self} connected.")
+
+    def _cleanup_failed_connect(self, cleanup) -> None:
+        try:
+            cleanup()
+        except BaseException as e:  # noqa: BLE001 - the connect error is the one re-raised
+            logger.error(f"{self}: cleanup after the failed connect also failed: {e!r}")
 
     @property
     def is_calibrated(self) -> bool:
