@@ -151,3 +151,18 @@ people or home-folder paths.
   both moving together. Follower peak lag 8.4 deg shoulder, 13 deg elbow (fast moves, up to 17 deg per 0.1 s), against
   63 / 55 deg with the cap. Held raised, the follower sat ~1-3 deg off the leader (gravity droop, in line with the
   P32 prediction of 19-27 ticks); at rest 0.13 / 0.8 deg. No sustained shaking while held.
+  The E2 follower move during the cue gap: the operator says they likely moved the shoulder ~10 deg; not a servo fault.
+- Arm check 2026-10-09 (`examples/hiwonder/arm_check.py`, guided start `hiwonder_teleop.py`):
+  - calibration (no motion): DEGREES mode zero is the middle of each arm's calibrated range, so leader and follower
+    midpoints differ by +10.5 deg (pan) and -7.4 deg (wrist_flex). Equal numbers point the arms that far apart; this is
+    why the wrist never matched by eye. Fix is recalibration (needs owner OK).
+  - self (script moves the follower, 15 deg out and back, probe first, goals clamped to the calibrated range): all six
+    PASS within 2 deg. Two lessons: the elbow rests at 3051-3055, past range_max 3046, and the servo refuses a Goal
+    outside the range (Angle error); the shoulder stops ~6 deg short of range_min (852) at the folded end (reached 942).
+  - hiwonder_teleop.py live: matched in 6 s, 30 Hz, Ctrl+C exit 0, 75 s torque watch clean.
+  - teleop (guided): pan, wrist_flex, wrist_roll, gripper, elbow PASS (settle <= 0.9 deg); grasp PASS (follower held
+    14 % short on a soft object, then reopened to within 0.7 %); shoulder FAIL: settled 8.7 deg short when the leader
+    folded to -104.6 (follower stops at -95.7, same folded-end stop as the self-test) and ~6 deg low held out straight.
+    Folded at rest, the follower shoulder is commanded past a stop it cannot reach. ~1 in 8 single Status reads raised
+    during teleop (21 in the grasp step, likely the overload flag), now counted, not scored as faults. Guided-run
+    torque watch clean.

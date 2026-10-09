@@ -155,8 +155,32 @@ Before teleoperation:
 
 1. Secure the follower base and clear its motion area.
 2. Verify which port belongs to each arm.
-3. Pose the leader to match the follower joint by joint, including wrist and gripper. On connect, the follower moves at full speed to the leader's pose.
-4. Keep the leader gripper partly open. Holding it fully closed stalls the follower gripper.
+3. Keep the leader gripper partly open. Holding it fully closed stalls the follower gripper.
+
+#### Check the arms (new arm or after recalibration)
+
+Run the three modes in order. Each prints PASS, FAIL or INCOMPLETE per joint and saves results to `outputs/arm_check/`.
+
+```bash
+ARGS="--leader-port=/dev/cu.usbmodemLEADER --leader-id=my_leader --follower-port=/dev/cu.usbmodemFOLLOWER --follower-id=my_follower"
+PYTHONPATH=src uv run --no-sync python examples/hiwonder/arm_check.py calibration $ARGS  # no motion
+PYTHONPATH=src uv run --no-sync python examples/hiwonder/arm_check.py self $ARGS         # follower moves on its own; hands clear
+PYTHONPATH=src uv run --no-sync python examples/hiwonder/arm_check.py teleop $ARGS       # spoken steps; have a soft object ready
+```
+
+- `calibration`: FAIL means leader and follower calibrations differ by more than 5 degrees on a joint. Recalibrate both arms.
+- `self`: each follower joint moves 15 degrees out and back; the gripper only opens.
+- `teleop`: match the arms, then move each leader joint far both ways and hold still when asked. Ends with a gripper grasp on a soft object laid in the follower's open jaws.
+
+#### Teleoperate
+
+Guided start (recommended): nothing moves until the leader matches the follower. Spoken cues name one joint at a time ("Elbow: 12 degrees off", "closer", "wrong way, go back"). Trust the numbers over your eye.
+
+```bash
+PYTHONPATH=src uv run --no-sync python examples/hiwonder/hiwonder_teleop.py $ARGS
+```
+
+Stock command: pose the leader to match the follower joint by joint first. On connect, the follower moves at full speed to the leader's pose.
 
 ```bash
 uv run --no-sync lerobot-teleoperate \
