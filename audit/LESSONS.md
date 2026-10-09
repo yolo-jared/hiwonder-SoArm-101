@@ -145,4 +145,9 @@ people or home-folder paths.
   Rerun at fps 30 (loop held 33.4 ms), match re-checked right after a short "Go" cue: no start jump. Operator: "felt
   smoother". Follower stalled in 22% of the elbow's moving steps vs 34% at fps 10; elbow peak lag 3.8 deg (faster lifts
   than the fps-10 run), hold error 0.44 deg, no jitter while still. In both runs the leader's shoulder_lift moved < 1 deg
-  although the cue asked for a shoulder lift, so shoulder lag without the cap is still unmeasured.
+  although the cue asked for a shoulder lift (the operator bent only the elbow; with the leader resting on the table
+  the shoulder cannot rise without the elbow opening).
+  Shoulder run, fps 30, no cap (E5; E4 recorded no leader motion): leader shoulder_lift travel 145 deg, elbow 138 deg,
+  both moving together. Follower peak lag 8.4 deg shoulder, 13 deg elbow (fast moves, up to 17 deg per 0.1 s), against
+  63 / 55 deg with the cap. Held raised, the follower sat ~1-3 deg off the leader (gravity droop, in line with the
+  P32 prediction of 19-27 ticks); at rest 0.13 / 0.8 deg. No sustained shaking while held.
