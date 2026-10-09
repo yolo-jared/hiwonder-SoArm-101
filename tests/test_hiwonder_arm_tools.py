@@ -22,6 +22,7 @@ from examples.hiwonder.arm_tools import (
     PASS,
     MatchGuide,
     calibration_offsets,
+    clamp_goal,
     evaluate_grasp,
     evaluate_joint,
     plan_self_move,
@@ -229,6 +230,20 @@ def test_targets_stay_inside_the_calibrated_range():
 def test_joint_at_its_range_end_moves_only_inward():
     plan = plan_self_move("elbow_flex", start=3045, calibration=cal(869, 3046), amp_deg=15)
     assert plan == [3045 - round(15 * TICKS_PER_DEG), 3045]
+
+
+def test_start_past_the_range_end_returns_to_the_range_end():
+    # Live 2026-10-09: follower elbow rested at 3051 with range_max 3046; Goal 3051 was refused (Angle error).
+    plan = plan_self_move("elbow_flex", start=3051, calibration=cal(869, 3046), amp_deg=15)
+    assert all(869 <= t <= 3046 for t in plan)
+    assert plan[-1] == 3046
+
+
+def test_clamp_goal_keeps_goals_inside_the_calibrated_range():
+    c = cal(869, 3046)
+    assert clamp_goal(3051, c) == 3046
+    assert clamp_goal(800, c) == 869
+    assert clamp_goal(2000, c) == 2000
 
 
 def test_amplitude_shrinks_to_the_room_left():

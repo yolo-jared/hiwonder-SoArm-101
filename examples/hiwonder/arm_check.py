@@ -36,6 +36,7 @@ from examples.hiwonder.arm_tools import (  # noqa: E402
     STILL_RANGE,
     TICKS_PER_DEG,
     calibration_offsets,
+    clamp_goal,
     evaluate_grasp,
     evaluate_joint,
     plan_self_move,
@@ -129,11 +130,13 @@ def check_calibration(args, out):
 # ---------- self ----------
 
 
-def move_joint(bus, joint, target, log):
-    """Ramp one joint's goal to target; return (reached, stalled)."""
+def move_joint(bus, joint, target, calibration, log):
+    """Ramp one joint's goal to target (kept inside the calibrated range); return (reached, stalled)."""
     start = bus.read("Present_Position", joint, normalize=False)
+    target = clamp_goal(target, calibration)
     over_since = None
     for goal in ramp(start, target, max_step=max(1, round(SELF_SPEED_DEG_S * SELF_PERIOD_S * TICKS_PER_DEG))):
+        goal = clamp_goal(goal, calibration)
         t0 = time.monotonic()
         bus.write("Goal_Position", joint, goal, normalize=False)
         present = bus.read("Present_Position", joint, normalize=False)
@@ -151,21 +154,22 @@ def move_joint(bus, joint, target, log):
 
 def self_test_joint(bus, joint, calibration, log):
     start = bus.read("Present_Position", joint, normalize=False)
+    home = clamp_goal(start, calibration)
     tol = SELF_TOL_DEG.get(joint, 3.0) * TICKS_PER_DEG
     plan = plan_self_move(joint, start, calibration, SELF_AMP_DEG)
     sides = [plan[i : i + 2] for i in range(0, len(plan), 2)]
-    done, reasons, metrics = 0, [], {"start": start, "sides": []}
+    done, reasons, metrics = 0, [], {"start": start, "home": home, "sides": []}
     for out_target, back in sides:
-        probe = start + round(PROBE_DEG * TICKS_PER_DEG) * (1 if out_target > start else -1)
-        after, stalled = move_joint(bus, joint, probe, log)
-        if stalled or not probe_ok(start, probe, after):
-            move_joint(bus, joint, start, log)
+        probe = home + round(PROBE_DEG * TICKS_PER_DEG) * (1 if out_target > home else -1)
+        after, stalled = move_joint(bus, joint, probe, calibration, log)
+        if stalled or not probe_ok(home, probe, after):
+            move_joint(bus, joint, home, calibration, log)
             metrics["sides"].append(
                 {"target": out_target, "probe_after": after, "skipped": "blocked or did not move"}
             )
             continue
-        reached, stalled = move_joint(bus, joint, out_target, log)
-        returned, stalled_back = move_joint(bus, joint, back, log)
+        reached, stalled = move_joint(bus, joint, out_target, calibration, log)
+        returned, stalled_back = move_joint(bus, joint, back, calibration, log)
         status = read_status(bus, joint)
         side = {
             "target": out_target,

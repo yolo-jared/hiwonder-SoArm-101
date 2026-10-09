@@ -190,6 +190,11 @@ def evaluate_grasp(t, leader, follower, status):
     return {"joint": GRIPPER, "verdict": PASS, "reasons": [], "metrics": metrics}
 
 
+def clamp_goal(value, calibration):
+    """A goal inside the calibrated range (the servo rejects one outside it with an Angle error)."""
+    return min(max(value, calibration["range_min"]), calibration["range_max"])
+
+
 def plan_self_move(joint, start, calibration, amp_deg):
     """Raw-tick targets for a follower self-test of one joint: out and back on each side that has room."""
     margin = round(RANGE_MARGIN_DEG * TICKS_PER_DEG)
@@ -200,6 +205,7 @@ def plan_self_move(joint, start, calibration, amp_deg):
         lo = max(lo, calibration["range_min"] + GRIPPER_CLOSED_MARGIN * span)
     amp = round(amp_deg * TICKS_PER_DEG)
     min_room = MIN_ROOM_DEG * TICKS_PER_DEG
+    start = clamp_goal(start, calibration)  # a joint can rest a few ticks past its range; the servo refuses that goal
     plan = []
     if hi - start >= min_room:
         plan += [start + min(amp, math.floor(hi - start)), start]
