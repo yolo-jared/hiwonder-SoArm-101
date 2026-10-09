@@ -206,11 +206,13 @@ def plan_self_move(joint, start, calibration, amp_deg):
     amp = round(amp_deg * TICKS_PER_DEG)
     min_room = MIN_ROOM_DEG * TICKS_PER_DEG
     start = clamp_goal(start, calibration)  # a joint can rest a few ticks past its range; the servo refuses that goal
-    plan = []
+    sides = []  # (room, out_target): a short side is near a range end, where the arm may touch itself or the base
     if hi - start >= min_room:
-        plan += [start + min(amp, math.floor(hi - start)), start]
+        sides.append((hi - start, start + min(amp, math.floor(hi - start))))
     if start - lo >= min_room:
-        plan += [start - min(amp, math.floor(start - lo)), start]
+        sides.append((start - lo, start - min(amp, math.floor(start - lo))))
+    full = [s for s in sides if s[0] >= amp]
+    plan = [x for _, out in (full or sides) for x in (out, start)]
     if not plan:
         raise ValueError(
             f"{joint}: no room to move at least {MIN_ROOM_DEG:.0f} degrees inside its calibrated range"

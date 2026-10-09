@@ -232,6 +232,13 @@ def test_joint_at_its_range_end_moves_only_inward():
     assert plan == [3045 - round(15 * TICKS_PER_DEG), 3045]
 
 
+def test_short_side_near_a_range_end_is_skipped_when_a_full_side_exists():
+    # Live 2026-10-09: shoulder at rest 999, range_min 852: the 11 deg minus side stopped 5.9 deg short
+    # (folded arm, likely contact) while the full plus side landed within 0.1 deg.
+    plan = plan_self_move("shoulder_lift", start=999, calibration=cal(852, 3205), amp_deg=15)
+    assert plan == [999 + round(15 * TICKS_PER_DEG), 999]
+
+
 def test_start_past_the_range_end_returns_to_the_range_end():
     # Live 2026-10-09: follower elbow rested at 3051 with range_max 3046; Goal 3051 was refused (Angle error).
     plan = plan_self_move("elbow_flex", start=3051, calibration=cal(869, 3046), amp_deg=15)
