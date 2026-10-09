@@ -15,11 +15,15 @@
 # limitations under the License.
 
 import logging
+import os
+import signal
+import threading
+import time
 
 import pytest
 
 from lerobot.utils.errors import DeviceNotConnectedError
-from lerobot.utils.robot_utils import disconnect_all
+from lerobot.utils.robot_utils import disconnect_all, exit_on_termination_signals
 
 
 def step(log: list[str], name: str, exc: BaseException | None = None):
@@ -77,3 +81,95 @@ def test_disconnect_all_treats_device_not_connected_as_done(caplog):
     disconnect_all(step(log, "s1", DeviceNotConnectedError("not connected")), step(log, "s2"))
     assert log == ["s1", "s2"]
     assert any(r.levelno == logging.INFO and "s1" in r.getMessage() for r in caplog.records)
+
+
+# --------------------------------------------------------------------------------------------------------------
+# Termination signals (FA-28): SIGTERM/SIGHUP must run the shutdown in `finally`, not kill the process mid-run.
+# --------------------------------------------------------------------------------------------------------------
+
+TERM_SIGNALS = [signal.SIGTERM] + ([signal.SIGHUP] if hasattr(signal, "SIGHUP") else [])
+
+
+class SignalNotHandled(BaseException):
+    """Stands in for the default action (process killed, `finally` skipped) so a red test fails cleanly."""
+
+
+@pytest.fixture
+def sentinel_signals():
+    def handler(signum, frame):
+        raise SignalNotHandled(signum)
+
+    saved = {s: signal.getsignal(s) for s in TERM_SIGNALS}
+    for s in TERM_SIGNALS:
+        signal.signal(s, handler)
+    yield handler
+    for s, h in saved.items():
+        signal.signal(s, h)
+
+
+def send(sig):
+    os.kill(os.getpid(), sig)
+    time.sleep(0.2)  # the handler runs in the main thread at the next bytecode boundary
+
+
+@pytest.mark.parametrize("sig", TERM_SIGNALS, ids=lambda s: s.name)
+def test_termination_signal_raises_system_exit_with_shell_code(sentinel_signals, sig):
+    with pytest.raises(SystemExit) as e, exit_on_termination_signals():
+        send(sig)
+    assert e.value.code == 128 + sig
+
+
+def test_termination_signal_runs_finally(sentinel_signals):
+    log = []
+    with pytest.raises(SystemExit), exit_on_termination_signals():
+        try:
+            send(signal.SIGTERM)
+        finally:
+            log.append("torque off")
+    assert log == ["torque off"]
+
+
+def test_previous_handlers_restored(sentinel_signals):
+    with exit_on_termination_signals():
+        assert signal.getsignal(signal.SIGTERM) is not sentinel_signals
+    assert all(signal.getsignal(s) is sentinel_signals for s in TERM_SIGNALS)
+
+
+def test_previous_handlers_restored_after_signal(sentinel_signals):
+    with pytest.raises(SystemExit), exit_on_termination_signals():
+        send(signal.SIGTERM)
+    assert all(signal.getsignal(s) is sentinel_signals for s in TERM_SIGNALS)
+
+
+def test_repeat_signal_during_shutdown_is_ignored(sentinel_signals, caplog):
+    """A second SIGTERM/SIGHUP (closing a terminal can send both) must not end a torque-off step midway: the
+    verified torque-off writes Goal=Present, which turns torque on, before it writes Torque_Enable=0."""
+    log = []
+    first = TERM_SIGNALS[-1]
+    with pytest.raises(SystemExit) as e, exit_on_termination_signals():
+        try:
+            send(first)
+        finally:
+            log.append("goal=present")
+            send(signal.SIGTERM)
+            log.append("torque_enable=0")
+    assert log == ["goal=present", "torque_enable=0"]
+    assert e.value.code == 128 + first
+    assert any(r.levelno == logging.WARNING and "SIGTERM" in r.getMessage() for r in caplog.records)
+
+
+def test_off_main_thread_is_a_no_op(sentinel_signals):
+    errors = []
+
+    def run():
+        try:
+            with exit_on_termination_signals():
+                pass
+        except BaseException as e:  # noqa: BLE001
+            errors.append(e)
+
+    t = threading.Thread(target=run)
+    t.start()
+    t.join()
+    assert errors == []
+    assert signal.getsignal(signal.SIGTERM) is sentinel_signals

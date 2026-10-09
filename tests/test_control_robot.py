@@ -14,6 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import signal
+import time
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -216,6 +219,10 @@ def _instrument_record(monkeypatch, order, say_exc=None, finalize_exc=None):
     real_finalize = LeRobotDataset.finalize
 
     def finalize(self):
+        # Logged only when it does work: finalize() is idempotent and record() calls it from both
+        # VideoEncodingManager.__exit__ and the outer shutdown.
+        if self._is_finalized:
+            return real_finalize(self)
         order.append("finalize")
         real_finalize(self)
         if finalize_exc is not None:
@@ -311,3 +318,185 @@ def test_record_camera_dropped_still_disconnects_follower(tmp_path, monkeypatch)
     monkeypatch.setattr(LeRobotDataset, "save_episode", save_episode)
     record(_record_cfg(tmp_path))
     assert "robot" in order
+
+
+# --------------------------------------------------------------------------------------------------------------
+# Remaining shutdown cases: video encoding after torque-off, SIGTERM/SIGHUP (FA-28), startup failing partway (R7)
+# --------------------------------------------------------------------------------------------------------------
+
+TERM_SIGNALS = [signal.SIGTERM] + ([signal.SIGHUP] if hasattr(signal, "SIGHUP") else [])
+
+
+class SignalNotHandled(BaseException):
+    """Stands in for the default action (process killed, `finally` skipped) so a red test fails cleanly."""
+
+
+@pytest.fixture
+def sentinel_signals():
+    def handler(signum, frame):
+        raise SignalNotHandled(signum)
+
+    saved = {s: signal.getsignal(s) for s in TERM_SIGNALS}
+    for s in TERM_SIGNALS:
+        signal.signal(s, handler)
+    yield handler
+    for s, h in saved.items():
+        signal.signal(s, h)
+
+
+def _send(sig):
+    os.kill(os.getpid(), sig)
+    time.sleep(0.2)
+
+
+def test_record_disconnects_arms_before_video_encoding(tmp_path, monkeypatch):
+    """VideoEncodingManager.__exit__ encodes the videos (can take minutes); the arms are off before it starts."""
+    order = []
+    _patch_disconnects(monkeypatch, order)
+    _instrument_record(monkeypatch, order)
+    record(_record_cfg(tmp_path))
+    assert order.index("robot") < order.index("teleop") < order.index("finalize")
+
+
+def test_record_ctrl_c_mid_episode_disconnects_arms_before_finalize(tmp_path, monkeypatch):
+    order = []
+    _patch_disconnects(monkeypatch, order)
+    _instrument_record(monkeypatch, order)
+
+    def interrupted(**kwargs):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(lerobot_record, "record_loop", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        record(_record_cfg(tmp_path))
+    assert order.index("robot") < order.index("teleop") < order.index("finalize")
+
+
+def test_record_disconnects_each_arm_once(tmp_path, monkeypatch):
+    order = []
+    _patch_disconnects(monkeypatch, order)
+    _instrument_record(monkeypatch, order)
+    record(_record_cfg(tmp_path))
+    assert order.count("robot") == 1
+    assert order.count("teleop") == 1
+
+
+def test_record_arm_error_does_not_cancel_video_encoding(tmp_path, monkeypatch):
+    """A torque-off error is re-raised after the dataset is saved; it does not reach VideoEncodingManager as an
+    exception (which would cancel pending videos)."""
+    order = []
+    _patch_disconnects(monkeypatch, order, robot_exc=RuntimeError("Torque-off not confirmed"))
+    _instrument_record(monkeypatch, order)
+    seen = []
+    real_exit = lerobot_record.VideoEncodingManager.__exit__
+
+    def vem_exit(self, exc_type, exc_val, exc_tb):
+        seen.append(exc_type)
+        return real_exit(self, exc_type, exc_val, exc_tb)
+
+    monkeypatch.setattr(lerobot_record.VideoEncodingManager, "__exit__", vem_exit)
+    with pytest.raises(RuntimeError, match="Torque-off not confirmed"):
+        record(_record_cfg(tmp_path))
+    assert seen == [None]
+    assert order.index("robot") < order.index("finalize")
+    assert "listener.stop" in order
+
+
+def test_record_failure_before_recording_still_disconnects_arms(tmp_path, monkeypatch):
+    order = []
+    _patch_disconnects(monkeypatch, order)
+    _instrument_record(monkeypatch, order)
+
+    def no_listener():
+        raise RuntimeError("keyboard listener failed")
+
+    monkeypatch.setattr(lerobot_record, "init_keyboard_listener", no_listener)
+    with pytest.raises(RuntimeError, match="keyboard listener failed"):
+        record(_record_cfg(tmp_path))
+    assert order[:2] == ["robot", "teleop"]
+
+
+def _signal_in_loop(sig):
+    def loop(*args, **kwargs):
+        _send(sig)
+
+    return loop
+
+
+@pytest.mark.parametrize("sig", TERM_SIGNALS, ids=lambda s: s.name)
+def test_teleoperate_termination_signal_disconnects_arms(monkeypatch, sentinel_signals, sig):
+    """FA-28: closing the terminal (SIGHUP) or `kill` (SIGTERM) runs the shutdown instead of killing the process."""
+    order = []
+    _patch_disconnects(monkeypatch, order)
+    monkeypatch.setattr(lerobot_teleoperate, "teleop_loop", _signal_in_loop(sig))
+    with pytest.raises(SystemExit) as e:
+        teleoperate(_teleop_cfg())
+    assert e.value.code == 128 + sig
+    assert order == ["robot", "teleop"]
+    assert signal.getsignal(sig) is sentinel_signals
+
+
+@pytest.mark.parametrize("sig", TERM_SIGNALS, ids=lambda s: s.name)
+def test_record_termination_signal_disconnects_arms_then_saves(tmp_path, monkeypatch, sentinel_signals, sig):
+    order = []
+    _patch_disconnects(monkeypatch, order)
+    _instrument_record(monkeypatch, order)
+    monkeypatch.setattr(lerobot_record, "record_loop", _signal_in_loop(sig))
+    with pytest.raises(SystemExit) as e:
+        record(_record_cfg(tmp_path))
+    assert e.value.code == 128 + sig
+    assert order.index("robot") < order.index("teleop") < order.index("finalize")
+    assert signal.getsignal(sig) is sentinel_signals
+
+
+def test_teleoperate_second_signal_does_not_cut_robot_disconnect_short(monkeypatch, sentinel_signals):
+    """Closing a terminal can send SIGHUP then SIGTERM; the second must not end the follower's torque-off midway."""
+    order = []
+
+    def robot_disconnect(self):
+        order.append("robot:start")
+        _send(signal.SIGTERM)
+        order.append("robot:end")
+        self._is_connected = False
+
+    monkeypatch.setattr(MockRobot, "disconnect", robot_disconnect)
+    monkeypatch.setattr(MockTeleop, "disconnect", _recording_disconnect(order, "teleop"))
+    monkeypatch.setattr(lerobot_teleoperate, "teleop_loop", _signal_in_loop(TERM_SIGNALS[-1]))
+    with pytest.raises(SystemExit):
+        teleoperate(_teleop_cfg())
+    assert order == ["robot:start", "robot:end", "teleop"]
+
+
+def _order_when_raised(order, exc_type, match):
+    """Disconnects done by the time the error leaves teleoperate(). Read inside `except`, while the traceback
+    still holds the devices: once it is dropped, Robot/Teleoperator.__del__ may disconnect them, which a real
+    crash does not guarantee."""
+    try:
+        teleoperate(_teleop_cfg())
+    except exc_type as e:
+        assert match in str(e)
+        return list(order)
+    raise AssertionError(f"{exc_type.__name__} not raised")
+
+
+def test_teleoperate_robot_connect_failure_disconnects_leader(monkeypatch):
+    """R7: the leader connected first is disconnected when the follower's connect raises."""
+    order = []
+    _patch_disconnects(monkeypatch, order)
+
+    def connect(self, calibrate=True):
+        raise ConnectionError("follower port busy")
+
+    monkeypatch.setattr(MockRobot, "connect", connect)
+    assert _order_when_raised(order, ConnectionError, "follower port busy") == ["teleop"]
+
+
+def test_teleoperate_leader_connect_failure_disconnects_nothing(monkeypatch):
+    order = []
+    _patch_disconnects(monkeypatch, order)
+
+    def connect(self, calibrate=True):
+        raise ConnectionError("leader port busy")
+
+    monkeypatch.setattr(MockTeleop, "connect", connect)
+    assert _order_when_raised(order, ConnectionError, "leader port busy") == []
