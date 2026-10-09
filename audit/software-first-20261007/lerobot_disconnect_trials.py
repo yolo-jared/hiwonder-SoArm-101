@@ -683,6 +683,74 @@ def latch_check(a) -> int:
     return 0 if res["verdict"] == "PASS" else 1
 
 
+def watch_check(a) -> int:
+    """Negative control for watch(): turn gripper torque on deliberately, then the watch must report FAIL on id 6.
+
+    Torque goes on via Goal_Position=Present (holds in place, no jaw motion; goal probe 2026-10-08 showed this write
+    re-enables torque). The gripper is turned off with a verified disable_torque() whatever the watch reports.
+    PASS needs: torque read on before the watch, watch verdict FAIL with first_on id 6, verified off, final all TE 0.
+    """
+    out = Path(a.out)
+    d = out / "watch-check"
+    d.mkdir(parents=True, exist_ok=True)
+    res: dict = {}
+    if holders := port_holders(a.port):
+        sys.exit(f"refusing: port held by PIDs {holders}")
+    if not reset_latch(a.port, d)["ok"]:
+        sys.exit("refusing: gripper overload latch not cleared")
+    bus = make_bus(a.port)
+    bus.port_handler.openPort()
+    try:
+        res["te_before"] = [read_raw(bus, TE, 1, GID)[0] for _ in range(2)]
+        res["present"] = present = read_raw(bus, PRESENT, 2, GID)[0]
+        if res["te_before"] != [0, 0] or present is None or present & 0x8000:
+            (d / "watch_check.json").write_text(json.dumps(res, indent=1, default=str))
+            sys.exit(f"refusing: gripper not verified off or bad Present ({res})")
+        say("Watch check. Gripper torque on for 5 seconds. Hands clear.", a.quiet)
+        res["goal_write"] = bus._write(GOAL, 2, GID, present, raise_on_error=False)
+        res["te_after_goal"] = read_raw(bus, TE, 1, GID)[0]
+    except BaseException:
+        bus.disable_torque(["gripper"])
+        raise
+    finally:
+        bus.port_handler.closePort()
+
+    bus, enable_writes = open_watch_bus(a.port)
+    w = None
+    try:
+        w = watch(partial(sample_bus, bus), a.watch_s)
+    finally:
+        enable_writes()
+        try:
+            bus.disable_torque(["gripper"])
+            res["safety_off"] = "verified"
+        except Exception as e:  # noqa: BLE001
+            res["safety_off"] = repr(e)
+        bus.port_handler.closePort()
+    (d / "watch.jsonl").write_text("\n".join(json.dumps(r) for r in w["rows"]) + "\n")
+    res.update(watch_verdict=w["verdict"], first_on=w["first_on"], watch_samples=w["samples"])
+
+    bus, _ = open_watch_bus(a.port)
+    try:
+        res["final"] = sample_bus(bus)
+    finally:
+        bus.port_handler.closePort()
+    checks = {
+        "torque on before watch": res["te_after_goal"] == 1,
+        "watch verdict FAIL": w["verdict"] == "FAIL",
+        "first torque-on is the gripper": (w["first_on"] or {}).get("id") == GID,
+        "gripper turned off, verified": res["safety_off"] == "verified",
+        "final: all Torque_Enable 0": all(res["final"][i]["te"] == 0 for i in range(1, 7)),
+    }
+    res["checks"] = checks
+    res["verdict"] = "PASS" if all(checks.values()) else "FAIL"
+    (d / "watch_check.json").write_text(json.dumps(res, indent=1, default=str))
+    for k, v in checks.items():
+        print(f"{'ok  ' if v else 'FAIL'} {k}", flush=True)
+    print(f"WATCH-CHECK {res['verdict']} first_on={w['first_on']} samples={w['samples']}", flush=True)
+    return 0 if res["verdict"] == "PASS" else 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", required=True)
@@ -694,6 +762,7 @@ def main() -> int:
     ap.add_argument("--self-check", action="store_true")
     ap.add_argument("--goal-probe", action="store_true")
     ap.add_argument("--latch-check", action="store_true", help="one stall + old shutdown, then bus.connect()")
+    ap.add_argument("--watch-check", action="store_true", help="negative control: gripper torque on, watch must FAIL")
     ap.add_argument("--quiet", action="store_true", help="no spoken cues")
     a = ap.parse_args()
     if problems := import_guard():
@@ -708,6 +777,8 @@ def main() -> int:
         return goal_probe(a.port, Path(a.out))
     if a.latch_check:
         return latch_check(a)
+    if a.watch_check:
+        return watch_check(a)
     if a.phase == "stall":
         phase_stall(a.port, a.method, Path(a.out))
         return 0

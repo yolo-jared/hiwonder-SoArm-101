@@ -93,6 +93,10 @@ down in a child process, then a separate exclusive read-only watch reads Torque_
   net turned torque off before the watch). Partial evidence that it can see torque on: the same `read_raw` path read
   TE 1 on hardware in the goal probe, the watch bus read Status 32 from hardware, and the FAIL rule is covered by the
   offline checks. Not a live negative control.
+  UPDATE 2026-10-09, live negative control (`lerobot_disconnect_trials.py --watch-check`, 1 run): gripper torque turned
+  on deliberately (Goal_Position=Present, no motion), read TE 1; the read-only watch returned FAIL on its first sample,
+  first_on id 6 TE 1 (ids 1-5 read 0); gripper then turned off and verified; final read all six TE 0. PASS. The watch
+  has now been seen failing on hardware when torque is on, so its earlier PASS results are not vacuous.
 - Today did not reproduce the historical torque recurrence (T1, 2026-10-07): 0 of 18 watched shutdowns.
 - Goal probe (FA-05): with TE 0, writing Goal_Position = Present turned torque on (readback 1, 1, 1).
 - Overload latch: a stall cut off with torque off leaves Status 0x20 set (>5 min observed) and every LeRobot read

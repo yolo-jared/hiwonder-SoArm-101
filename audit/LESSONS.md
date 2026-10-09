@@ -90,7 +90,9 @@ people or home-folder paths.
     no write, RuntimeError saying power-cycle. Unit-tested only (`test_hiwonder_torque_off.py`, LA-01..LA-14; the
     "Missing motor IDs: 6" trace reproduced on the fake bus). Live check 2026-10-08, 1 run (`lerobot_disconnect_trials.py
     --latch-check`): stall -> old shutdown raised -> Status 0x20 latched, all TE 0 -> `bus.connect()` returned in
-    0.67 s with the WARNING (Goal=1491) -> Status 0, 20 s read-only watch all TE 0. PASS, n=1.
+    0.67 s with the WARNING (Goal=1491) -> Status 0, 20 s read-only watch all TE 0. PASS, n=1. The watch itself was
+    shown to catch torque on (`--watch-check`, 2026-10-09: gripper torque on deliberately -> watch FAIL on id 6 at the
+    first sample -> verified off), so its all-off results above are not vacuous.
 
 14. A frozen USB adapter can block `clearPort()`/`tcdrain` with no timeout and hang shutdown for both arms; the ~2 s
     torque-off bound holds only while the adapter accepts and drains writes (spec R6). Recovery: unplug the USB cable
