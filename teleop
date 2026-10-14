@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+cd "$(dirname "$0")"
+exec env PYTHONPATH=src uv run --no-sync python examples/hiwonder/hiwonder_teleop.py \
+  --leader-port=/dev/cu.usbmodem5C821075601 --leader-id=hiwonder_leader \
+  --follower-port=/dev/cu.usbmodem5C821076571 --follower-id=hiwonder_follower \
+  "$@"
