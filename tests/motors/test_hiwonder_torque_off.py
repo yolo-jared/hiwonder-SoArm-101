@@ -1292,3 +1292,31 @@ def test_ctrl_c_during_input_reset_sends_nothing():
         ph.writeReadData(6, TE_ADDR, 1, [0])
     assert line.memory[6][TE_ADDR] == 1
     assert ph.port_handler.is_using is False
+
+
+@pytest.mark.parametrize(
+    "write_exc", [serial.SerialException("unplugged"), KeyboardInterrupt()], ids=["serial", "ctrl_c"]
+)
+def test_failed_best_effort_write_after_reset_failure(write_exc):
+    """protects=when the input reset fails and the best-effort write also fails, a serial write error is
+    dropped in favour of the original reset error, a Ctrl+C during that write propagates as
+    KeyboardInterrupt, and is_using is released either way;
+    fails_when=the best-effort write swallows BaseException (Ctrl+C masked as a serial error) or leaks its
+    own error, or the busy flag stays set;
+    no_claim=short writes from the best-effort send are not checked (return value ignored by design)."""
+    line = ByteServoLine({6: {TE_ADDR: 1}})
+    ph = make_packet_handler(line)
+    reset_exc = serial.SerialException("purge failed")
+    line.raise_on_reset.append(reset_exc)
+
+    def write(data):
+        raise write_exc
+
+    line.write = write
+    expected = KeyboardInterrupt if isinstance(write_exc, KeyboardInterrupt) else serial.SerialException
+    with pytest.raises(expected) as info:
+        ph.writeReadData(6, TE_ADDR, 1, [0])
+    if expected is serial.SerialException:
+        assert info.value is reset_exc
+    assert line.raise_on_reset == []
+    assert ph.port_handler.is_using is False
