@@ -164,9 +164,10 @@ class PacketHandler:
             # The caller still gets the error, so no reply is trusted.
             try:  # noqa: SIM105
                 self.port_handler.writePort(txpacket)
-            except BaseException:
+            except Exception:
                 pass
-            self.port_handler.is_using = False
+            finally:
+                self.port_handler.is_using = False
             raise
         except BaseException:
             self.port_handler.is_using = False
