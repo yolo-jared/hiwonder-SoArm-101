@@ -48,8 +48,12 @@ people or home-folder paths.
    register (24), not P.
 3. Check video before calling a stall. Run2 "+" stall-guard stops were table contact.
 4. `sync_read("Present_Load")` already sign-decodes (bit 10). Do not decode again.
-5. Bundled `hiwonder_sdk` has no reply LEN check and `clearPort` does not clear input: a late reply was read as a wrong register
-   value in emulation (FINDINGS F3).
+5. Bundled `hiwonder_sdk` once had no reply LEN check and a `clearPort` that left stale input: a late reply was read as a wrong
+   register value in emulation (FINDINGS F3). Now `readData` rejects a reply whose LEN != requested length + 2 (commit
+   `f93c3390`), and `clearPort` does `flush()` + `reset_input_buffer()` before each instruction, so reply bytes already
+   buffered on the host are discarded. A reply that arrives AFTER that reset can still be taken by the next transaction
+   (issue #6). If `clearPort` raises, the instruction is still sent once (so torque-off reaches the servo) and the error is
+   re-raised. Unit-tested only; not run on hardware.
 6. Gripper `Protection_Current 250` = 250 mA in HX units, not "50%" as the code comment says (FINDINGS F4).
 7. A clamp or guard must be shown failing (negative control) before its pass counts as evidence.
 
