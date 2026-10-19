@@ -161,7 +161,8 @@ class PacketHandler:
             self.port_handler.clearPort()
         except Exception:
             # A failing input reset must not suppress the instruction (torque-off on disconnect).
-            # The caller still gets the error, so no reply is trusted.
+            # The caller still gets the error and this reply is never read, but it stays in flight:
+            # the next transaction can take it as its own reply (see issue #6).
             try:  # noqa: SIM105
                 self.port_handler.writePort(txpacket)
             except Exception:
