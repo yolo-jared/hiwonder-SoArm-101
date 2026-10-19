@@ -1259,3 +1259,36 @@ def test_write_failure_releases_port_busy_flag(exc):
     assert pending == []  # the raise really came from writePort
     assert ph.port_handler.is_using is False
     assert ph.read1ByteData(6, TE_ADDR) == (1, hw.COMM_SUCCESS, 0)
+
+
+# ---------------------------------------------------------------------------------------------------------
+# A failing input reset must not suppress the instruction itself (torque-off must still reach the servo)
+# ---------------------------------------------------------------------------------------------------------
+
+
+def test_input_reset_failure_still_sends_the_instruction():
+    """protects=when reset_input_buffer keeps failing but the line still accepts writes, a Torque_Enable=0
+    write still reaches the servo, the error still propagates and is_using is released;
+    fails_when=clearPort's input reset gates the write, so disconnect's torque-off retries never transmit
+    and the arm stays energized (fork/main sent these writes; only flush could block them);
+    no_claim=the readback is not trusted (the exception propagates); real adapter failure modes not modelled."""
+    line = ByteServoLine({6: {TE_ADDR: 1}})
+    ph = make_packet_handler(line)
+    line.raise_on_reset.extend(serial.SerialException("purge failed") for _ in range(5))
+    with pytest.raises(serial.SerialException):
+        ph.writeReadData(6, TE_ADDR, 1, [0])
+    assert line.memory[6][TE_ADDR] == 0
+    assert ph.port_handler.is_using is False
+
+
+def test_ctrl_c_during_input_reset_sends_nothing():
+    """protects=Ctrl+C raised inside clearPort propagates at once, sends nothing and releases is_using;
+    fails_when=a best-effort send on reset failure also fires on KeyboardInterrupt;
+    no_claim=regression guard for the reset-failure send path, not red-first (passes before that change)."""
+    line = ByteServoLine({6: {TE_ADDR: 1}})
+    ph = make_packet_handler(line)
+    line.raise_on_reset.append(KeyboardInterrupt())
+    with pytest.raises(KeyboardInterrupt):
+        ph.writeReadData(6, TE_ADDR, 1, [0])
+    assert line.memory[6][TE_ADDR] == 1
+    assert ph.port_handler.is_using is False
