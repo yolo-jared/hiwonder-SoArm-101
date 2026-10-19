@@ -60,6 +60,7 @@ class ByteServoLine:
         self.queued: list[bytes] = []
         self.errors: dict[int, int] = {}
         self.raise_on_read: list[BaseException] = []
+        self.raise_on_reset: list[BaseException] = []
         self.on_write = None
 
     # pyserial surface used by PortHandler
@@ -69,7 +70,14 @@ class ByteServoLine:
             self.on_write(data)
         hw_id, instr, params = data[2], data[4], data[5:-1]
         reply = b""
-        if instr == hw.INST_READ:
+        if instr == hw.INST_SYNC_READ:
+            addr, n, *ids = params
+            for sid in ids:
+                regs = self.memory[sid]
+                reply += status_packet(
+                    sid, [regs.get(addr + i, 0) for i in range(n)], self.errors.get(sid, 0)
+                )
+        elif instr == hw.INST_READ:
             addr, n = params
             regs = self.memory[hw_id]
             reply = status_packet(hw_id, [regs.get(addr + i, 0) for i in range(n)], self.errors.get(hw_id, 0))
@@ -91,6 +99,8 @@ class ByteServoLine:
         return out
 
     def reset_input_buffer(self) -> None:
+        if self.raise_on_reset:
+            raise self.raise_on_reset.pop(0)
         self.rx.clear()
 
     def flush(self) -> None:
@@ -149,6 +159,117 @@ def test_wrong_len_reply_is_rejected_by_read_data():
     data, comm, _ = ph.readData(6, TE_ADDR, 1)
     assert comm == hw.COMM_RX_CORRUPT
     assert data == []
+
+
+# --------------------------------------------------------------------------------------------------------------
+# Issue #1: stale bytes already in the host input buffer must not be returned as the next read's data
+# (stale bytes are injected straight into line.rx, i.e. BEFORE the request is sent, never via line.queued)
+# --------------------------------------------------------------------------------------------------------------
+
+
+def test_prebuffered_stale_same_len_reply_is_discarded_1byte():
+    """protects=a 1-byte read returns the servo's current value, not a stale same-ID same-LEN reply already in rx;
+    fails_when=clearPort leaves pre-buffered bytes so the stale 1 is returned with COMM_SUCCESS;
+    no_claim=nothing about replies that arrive after the request is written."""
+    line = ByteServoLine({6: {TE_ADDR: 0}})
+    ph = make_packet_handler(line)
+    line.rx += status_packet(6, [1])
+    assert ph.read1ByteData(6, TE_ADDR) == (0, hw.COMM_SUCCESS, 0)
+
+
+def test_prebuffered_stale_same_len_reply_is_discarded_2byte():
+    """protects=a 2-byte read returns the current register word, not a stale same-LEN reply in rx;
+    fails_when=pre-buffered bytes survive clearPort and 0x1234 is returned with COMM_SUCCESS;
+    no_claim=nothing about replies arriving after the request is written."""
+    line = ByteServoLine({6: {PRESENT_ADDR: 0x02, PRESENT_ADDR + 1: 0x08}})
+    ph = make_packet_handler(line)
+    line.rx += status_packet(6, [0x34, 0x12])
+    assert ph.read2ByteData(6, PRESENT_ADDR) == (0x0802, hw.COMM_SUCCESS, 0)
+
+
+def test_prebuffered_wrong_len_reply_is_discarded():
+    """protects=a stale write ack (LEN=2) already in rx does not turn a good read into COMM_RX_CORRUPT;
+    fails_when=the stale ack survives clearPort and the LEN check rejects the read;
+    no_claim=the LEN check itself (covered by the earlier LEN tests) is not re-tested here."""
+    line = ByteServoLine({6: {TE_ADDR: 1}})
+    ph = make_packet_handler(line)
+    line.rx += status_packet(6, [])
+    assert ph.read1ByteData(6, TE_ADDR) == (1, hw.COMM_SUCCESS, 0)
+
+
+class _RecordingSerial:
+    def __init__(self):
+        self.calls: list[str] = []
+
+    def flush(self) -> None:
+        self.calls.append("flush")
+
+    def reset_input_buffer(self) -> None:
+        self.calls.append("reset_input_buffer")
+
+
+def test_clear_port_flushes_output_then_resets_input():
+    """protects=clearPort drains the output buffer and then discards the input buffer, in that order;
+    fails_when=clearPort only flushes and never calls reset_input_buffer;
+    no_claim=this pins the call order of one implementation; a drain-until-empty implementation would satisfy the same intent."""
+    double = _RecordingSerial()
+    port = hw.PortHandler("/dev/fake")
+    port.ser = double
+    port.is_open = True
+    port.clearPort()
+    assert double.calls == ["flush", "reset_input_buffer"]
+
+
+def test_prebuffered_stale_reply_is_discarded_before_sync_read():
+    """protects=a sync read returns the current Present_Position, not a stale same-LEN packet already in rx;
+    fails_when=the stale packet survives clearPort and is parsed as the reply;
+    no_claim=single-ID only; multi-ID ordering is covered by the next test."""
+    line = ByteServoLine({6: {PRESENT_ADDR: 0x02, PRESENT_ADDR + 1: 0x08}})
+    ph = make_packet_handler(line)
+    line.rx += status_packet(6, [0x34, 0x12])
+    group = hw.GroupSyncRead(ph, PRESENT_ADDR, 2)
+    group.addParam(6)
+    assert group.txRxPacket() == hw.COMM_SUCCESS
+    assert group.getData(6, PRESENT_ADDR, 2) == 0x0802
+
+
+def test_prebuffered_stale_reply_is_discarded_before_multi_id_sync_read():
+    """protects=a 3-servo sync read gets each servo's true value and leaves rx empty, on repeated calls;
+    fails_when=a stale ID-2 packet survives clearPort and displaces or corrupts the replies, or bytes are left over;
+    no_claim=says nothing about timing or about servos that do not answer."""
+    line = ByteServoLine(
+        {
+            i: {PRESENT_ADDR: lo, PRESENT_ADDR + 1: hi}
+            for i, lo, hi in [(1, 0x11, 0x01), (2, 0x22, 0x02), (3, 0x33, 0x03)]
+        }
+    )
+    ph = make_packet_handler(line)
+    line.rx += status_packet(2, [0xAA, 0x0F])
+    group = hw.GroupSyncRead(ph, PRESENT_ADDR, 2)
+    for i in (1, 2, 3):
+        group.addParam(i)
+    assert group.txRxPacket() == hw.COMM_SUCCESS
+    assert [group.getData(i, PRESENT_ADDR, 2) for i in (1, 2, 3)] == [0x0111, 0x0222, 0x0333]
+    assert len(line.rx) == 0
+
+    for i, v in [(1, 0x0444), (2, 0x0555), (3, 0x0666)]:
+        line.memory[i][PRESENT_ADDR], line.memory[i][PRESENT_ADDR + 1] = v & 0xFF, v >> 8
+    assert group.txRxPacket() == hw.COMM_SUCCESS
+    assert [group.getData(i, PRESENT_ADDR, 2) for i in (1, 2, 3)] == [0x0444, 0x0555, 0x0666]
+    assert len(line.rx) == 0
+
+
+def test_reset_failure_releases_port_busy_flag():
+    """protects=a serial error inside clearPort propagates but does not leave is_using stuck True;
+    fails_when=txPacket sets is_using then clearPort raises, so every later request returns COMM_PORT_BUSY;
+    no_claim=only reset_input_buffer failing once is modelled, not write failures."""
+    line = ByteServoLine({6: {TE_ADDR: 1}})
+    ph = make_packet_handler(line)
+    line.raise_on_reset.append(serial.SerialException("boom"))
+    with pytest.raises(serial.SerialException):
+        ph.read1ByteData(6, TE_ADDR)
+    assert ph.port_handler.is_using is False
+    assert ph.read1ByteData(6, TE_ADDR) == (1, hw.COMM_SUCCESS, 0)
 
 
 # --------------------------------------------------------------------------------------------------------------
@@ -950,7 +1071,9 @@ LATCHED = {"te": 0, "overload": True, "goal_enables_torque": True, "present": 14
 
 
 def latch_warnings(caplog):
-    return [r for r in caplog.records if r.levelno == logging.WARNING and "Overload latched" in r.getMessage()]
+    return [
+        r for r in caplog.records if r.levelno == logging.WARNING and "Overload latched" in r.getMessage()
+    ]
 
 
 def test_latched_gripper_is_cleared_and_connect_succeeds(clock, caplog):
@@ -996,7 +1119,8 @@ def test_healthy_handshake_writes_nothing(clock):
 
 
 @pytest.mark.parametrize(
-    "bit", [hw.ERRBIT_OVERHEAT, hw.ERRBIT_VOLTAGE, hw.ERRBIT_ANGLE, hw.ERRBIT_CURRENT, hw.ERRBIT_SENSOR, 0x40, 0x80]
+    "bit",
+    [hw.ERRBIT_OVERHEAT, hw.ERRBIT_VOLTAGE, hw.ERRBIT_ANGLE, hw.ERRBIT_CURRENT, hw.ERRBIT_SENSOR, 0x40, 0x80],
 )
 def test_other_fault_bit_is_never_written(clock, bit):
     """LA-03: Overload plus any other fault bit gets no torque-on write; the error names the motor."""
