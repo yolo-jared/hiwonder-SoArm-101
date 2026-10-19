@@ -1226,3 +1226,36 @@ def test_two_latched_motors_both_cleared(clock, caplog):
         assert fake.servos[i].te == 0
         assert_confirmed(fake, i)
     assert len(latch_warnings(caplog)) == 2
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Issue #1 coverage audit: txPacket's try/except also guards writePort()
+# ---------------------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "exc", [serial.SerialException("unplugged"), KeyboardInterrupt()], ids=["serial", "ctrl_c"]
+)
+def test_write_failure_releases_port_busy_flag(exc):
+    """Value: protects=a write error (USB unplug) or Ctrl+C raised inside writePort propagates and
+    releases is_using; fails_when=writePort is moved out of the try, or the handler is narrowed to
+    `except Exception` (Ctrl+C case), so every later request returns COMM_PORT_BUSY;
+    why_new=test_reset_failure_releases_port_busy_flag only makes clearPort raise, writePort never
+    raises in any test; seam=none; no_claim=nothing about short writes (COMM_TX_FAIL, unchanged) or
+    about bytes partially sent before the error."""
+    line = ByteServoLine({6: {TE_ADDR: 1}})
+    ph = make_packet_handler(line)
+    real_write = line.write
+    pending = [exc]
+
+    def write(data):
+        if pending:
+            raise pending.pop(0)
+        return real_write(data)
+
+    line.write = write
+    with pytest.raises(type(exc)):
+        ph.read1ByteData(6, TE_ADDR)
+    assert pending == []  # the raise really came from writePort
+    assert ph.port_handler.is_using is False
+    assert ph.read1ByteData(6, TE_ADDR) == (1, hw.COMM_SUCCESS, 0)
