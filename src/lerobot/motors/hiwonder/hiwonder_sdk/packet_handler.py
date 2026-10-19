@@ -159,6 +159,20 @@ class PacketHandler:
 
         try:
             self.port_handler.clearPort()
+        except Exception:
+            # A failing input reset must not suppress the instruction (torque-off on disconnect).
+            # The caller still gets the error, so no reply is trusted.
+            try:  # noqa: SIM105
+                self.port_handler.writePort(txpacket)
+            except BaseException:
+                pass
+            self.port_handler.is_using = False
+            raise
+        except BaseException:
+            self.port_handler.is_using = False
+            raise
+
+        try:
             written_packet_length = self.port_handler.writePort(txpacket)
         except BaseException:
             self.port_handler.is_using = False
