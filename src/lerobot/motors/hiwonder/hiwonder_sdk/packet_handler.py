@@ -157,8 +157,28 @@ class PacketHandler:
             checksum += txpacket[index]
         txpacket[total_packet_length - 1] = ~checksum & 0xFF
 
-        self.port_handler.clearPort()
-        written_packet_length = self.port_handler.writePort(txpacket)
+        try:
+            self.port_handler.clearPort()
+        except Exception:
+            # A failing input reset must not suppress the instruction (torque-off on disconnect).
+            # The caller still gets the error and this reply is never read, but it stays in flight:
+            # the next transaction can take it as its own reply (see issue #6).
+            try:  # noqa: SIM105
+                self.port_handler.writePort(txpacket)
+            except Exception:
+                pass
+            finally:
+                self.port_handler.is_using = False
+            raise
+        except BaseException:
+            self.port_handler.is_using = False
+            raise
+
+        try:
+            written_packet_length = self.port_handler.writePort(txpacket)
+        except BaseException:
+            self.port_handler.is_using = False
+            raise
         if total_packet_length != written_packet_length:
             self.port_handler.is_using = False
             return COMM_TX_FAIL

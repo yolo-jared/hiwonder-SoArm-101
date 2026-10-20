@@ -40,6 +40,8 @@ class PortHandler:
 
     def clearPort(self):  # noqa: N802
         self.ser.flush()
+        # pyserial flush() only drains output; reset_input_buffer() discards stale reply bytes already received.
+        self.ser.reset_input_buffer()
 
     def setPortName(self, port_name):  # noqa: N802
         self.port_name = port_name
